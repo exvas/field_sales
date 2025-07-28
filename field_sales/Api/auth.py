@@ -165,13 +165,18 @@ def logout(usr):
 
 
 @frappe.whitelist(allow_guest=True)
-def get_items_with_price(price_list="Standard Selling"):
-    items = frappe.get_all("Item", filters={"disabled": 0}, fields=["name", "item_name", "description", "stock_uom"])
+def get_items(price_list="Standard Selling"):
+    items = frappe.get_all(
+        "Item",
+        filters={"disabled": 0},
+        fields=["name", "item_name", "description", "stock_uom", "is_stock_item"]
+    )
 
     result = []
 
     for item in items:
-        price_doc = frappe.db.get_value(
+        # Get price from Item Price
+        price = frappe.db.get_value(
             "Item Price",
             filters={"item_code": item.name, "price_list": price_list},
             fieldname="price_list_rate"
@@ -182,7 +187,42 @@ def get_items_with_price(price_list="Standard Selling"):
             "item_name": item.item_name,
             "description": item.description,
             "uom": item.stock_uom,
-            "price": price_doc or 0.0
+            "price": price or 0.0,
+            "maintain_stock": item.is_stock_item  # True or False
         })
 
     return result
+
+@frappe.whitelist()
+def get_customers():
+    customers=frappe.get_all("Customer",fields=["name", "customer_name", "customer_type", "customer_group", "territory", "mobile_no", "email_id"])
+    return {"message": customers}
+
+@frappe.whitelist()
+def create_sales_order():
+    data=frappe.request.get_json()
+    customer_name=data.get("customer")
+    if not frappe.db.exists("Customer", customer_name):
+        return {
+            "status": "error",
+            "message": f"Customer '{customer_name}' does not exist."
+        }
+
+    # ✅ Create Sales Order
+    so = frappe.get_doc({
+        "doctype": "Sales Order",
+        "customer": customer_name,
+        "delivery_date": data.get("delivery_date"),
+        "items": data.get("items")
+    })
+    so.insert(ignore_permissions=True)
+    so.submit()
+
+    return {
+        "status": "success",
+        "sales_order": so.name
+    }
+@frappe.whitelist()
+def get_sales_order():
+    frappe.get_doc("Sales Order")
+    
