@@ -223,6 +223,63 @@ def create_sales_order():
         "sales_order": so.name
     }
 @frappe.whitelist()
-def get_sales_order():
-    frappe.get_doc("Sales Order")
+def get_sales_orders_with_details():
+    sales_order_names = frappe.get_all("Sales Order", fields=["name"])
     
+    sales_orders = []
+    for so in sales_order_names:
+        doc = frappe.get_doc("Sales Order", so.name)
+        sales_orders.append({
+            "name": doc.name,
+            "customer": doc.customer,
+            "delivery_date": doc.delivery_date,
+            "items": [
+                {
+                    "item_code": item.item_code,
+                    "qty": item.qty,
+                    "rate": item.rate,
+                    "amount": item.amount
+                } for item in doc.items
+            ]
+        })
+
+    return {
+        "status": "success",
+        "sales_orders": sales_orders
+    }
+
+import frappe
+from frappe import _
+
+@frappe.whitelist()
+def get_employee_location_entries(employee=None):
+    if not employee:
+        frappe.throw(_("Employee is required"))
+
+    try:
+        results = []
+        
+        # Get all parent Employee Location Log records for this employee
+        logs = frappe.get_all(
+            "Employee Location Log",
+            filters={"employee": employee},
+            fields=["name"]
+        )
+
+        if not logs:
+            return []
+
+        log_names = [log.name for log in logs]
+
+        # Get child entries from Employee Location Entry where parent is in log_names
+        entries = frappe.get_all(
+            "Employee Location Entry",
+            filters={"parent": ["in", log_names]},
+            fields=["parent", "latitude", "longitude", "creation"]
+        )
+
+        return entries
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "get_employee_location_entries error")
+        frappe.throw(_("Failed to fetch employee location entries."))
