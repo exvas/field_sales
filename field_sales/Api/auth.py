@@ -333,3 +333,220 @@ def get_sales_invoice_list():
         })
 
     return {"invoices": result}
+
+# import frappe
+# from frappe.utils import nowdate
+# from frappe import _
+
+# # In your custom app .py file
+# @frappe.whitelist(allow_guest=True)
+# def create_payment_entry():
+#     data = frappe.request.get_json()
+    
+#     sales_invoice_id = data.get("sales_invoice_id")
+#     amount = data.get("amount")
+#     mode_of_payment = data.get("mode_of_payment")  # Should be "Cash" or "Card"
+
+#     if not sales_invoice_id or not amount or not mode_of_payment:
+#         return {
+#             "status": "error",
+#             "message": "sales_invoice_id, amount, and mode_of_payment are required."
+#         }
+
+#     # Get the related Sales Invoice
+#     sales_invoice = frappe.get_doc("Sales Invoice", sales_invoice_id)
+    
+#     # Create Payment Entry
+#     pe = frappe.get_doc({
+#         "doctype": "Payment Entry",
+#         "payment_type": "Receive",
+#         "party_type": "Customer",
+#         "party": sales_invoice.customer,
+#         "posting_date": frappe.utils.nowdate(),
+#         "paid_amount": amount,
+#         "received_amount": amount,
+#         "mode_of_payment": mode_of_payment,
+#         "reference_no": frappe.generate_hash(length=10),  # Random reference
+#         "reference_date": frappe.utils.nowdate(),
+#         "references": [
+#             {
+#                 "reference_doctype": "Sales Invoice",
+#                 "reference_name": sales_invoice.name,
+#                 "allocated_amount": amount
+#             }
+#         ]
+#     })
+
+#     pe.insert(ignore_permissions=True)
+#     pe.submit()
+
+#     return {
+#         "status": "success",
+#         "payment_entry": pe.name
+#     }
+
+@frappe.whitelist(methods=["POST"])
+def pay_sales_invoice():
+    data = frappe.request.get_json()
+
+    invoice_name = data.get("invoice_name")
+    payment_amount = float(data.get("payment_amount", 0))
+    mode_of_payment = data.get("mode_of_payment", "Cash")
+    reference_no = data.get("reference_no", "")
+    reference_date = data.get("reference_date", frappe.utils.nowdate())
+    posting_date = data.get("posting_date", frappe.utils.nowdate())
+
+    if not invoice_name or payment_amount <= 0:
+        return {
+            "status": "error",
+            "message": "Invoice name and valid payment amount are required",
+            "code": 400
+        }
+
+    invoice = frappe.get_doc("Sales Invoice", invoice_name)
+
+    if invoice.docstatus != 1:
+        return {
+            "status": "error",
+            "message": "Invoice is not submitted",
+            "code": 400
+        }
+
+    if invoice.outstanding_amount <= 0:
+        return {
+            "status": "error",
+            "message": "Invoice already paid",
+            "code": 400
+        }
+
+    # Get Paid To Account based on mode of payment and company
+    paid_to = frappe.db.get_value("Mode of Payment Account", {
+        "parent": mode_of_payment,
+        "company": invoice.company
+    }, "default_account")
+
+    if not paid_to:
+        return {
+            "status": "error",
+            "message": f"Account not found for Mode of Payment '{mode_of_payment}' in company '{invoice.company}'",
+            "code": 400
+        }
+
+    payment_entry = frappe.get_doc({
+        "doctype": "Payment Entry",
+        "payment_type": "Receive",
+        "party_type": "Customer",
+        "party": invoice.customer,
+        "company": invoice.company,
+        "posting_date": posting_date,
+        "mode_of_payment": mode_of_payment,
+        "paid_to": paid_to,
+        "paid_amount": payment_amount,
+        "received_amount": payment_amount,
+        "reference_no": reference_no,
+        "reference_date": reference_date,
+        "references": [
+            {
+                "reference_doctype": "Sales Invoice",
+                "reference_name": invoice.name,
+                "total_amount": invoice.grand_total,
+                "outstanding_amount": invoice.outstanding_amount,
+                "allocated_amount": payment_amount
+            }
+        ]
+    })
+
+    payment_entry.insert(ignore_permissions=True)
+    # payment_entry.submit()
+
+    return {
+        "status": "success",
+        "payment_entry": payment_entry.name
+    }
+
+@frappe.whitelist(allow_guest=True)
+def get_customer_sales_invoices(customer):
+    try:
+        invoices = frappe.get_all(
+            "Sales Invoice",
+            filters={"customer": customer, "docstatus": 1},
+            fields=["name", "posting_date", "due_date", "grand_total", "outstanding_amount"],
+            order_by="posting_date desc"
+        )
+
+        invoice_data = []
+
+        for inv in invoices:
+            items = frappe.get_all(
+                "Sales Invoice Item",
+                filters={"parent": inv.name},
+                fields=["item_code", "item_name", "qty", "rate", "amount"]
+            )
+
+            invoice_data.append({
+                "invoice_name": inv.name,
+                "posting_date": inv.posting_date,
+                "due_date": inv.due_date,
+                "grand_total": inv.grand_total,
+                "outstanding_amount": inv.outstanding_amount,
+                "items": items
+            })
+
+        return {
+            "status": "success",
+            "customer": customer,
+            "invoice_count": len(invoice_data),
+            "invoices": invoice_data
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "get_customer_sales_invoices")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+@frappe.whitelist(allow_guest=True)
+def get_customer_sales_invoices(customer):
+    try:
+        invoices = frappe.get_all(
+            "Sales Invoice",
+            filters={"customer": customer, "docstatus": 1},
+            fields=["name", "posting_date", "due_date", "grand_total", "outstanding_amount"],
+            order_by="posting_date desc"
+        )
+
+        invoice_data = []
+        total_outstanding = 0
+
+        for inv in invoices:
+            items = frappe.get_all(
+                "Sales Invoice Item",
+                filters={"parent": inv.name},
+                fields=["item_code", "item_name", "qty", "rate", "amount"]
+            )
+
+            total_outstanding += inv.outstanding_amount or 0
+
+            invoice_data.append({
+                "invoice_name": inv.name,
+                "posting_date": inv.posting_date,
+                "due_date": inv.due_date,
+                "grand_total": inv.grand_total,
+                "outstanding_amount": inv.outstanding_amount,
+                "items": items
+            })
+
+        return {
+            "status": "success",
+            "customer": customer,
+            "invoice_count": len(invoice_data),
+            "total_outstanding_amount": total_outstanding,
+            "invoices": invoice_data
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "get_customer_sales_invoices")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
