@@ -195,7 +195,27 @@ def get_items(price_list="Standard Selling"):
 
 @frappe.whitelist()
 def get_customers():
-    customers=frappe.get_all("Customer",fields=["name", "customer_name", "customer_type", "customer_group", "territory", "mobile_no", "email_id"])
+    customers = frappe.get_all(
+        "Customer",
+        fields=[
+            "name",
+            "customer_name",
+            "customer_type",
+            "customer_group",
+            "territory",
+            "mobile_no",
+            "email_id",
+            "gstin"  # Include GSTIN field
+        ]
+    )
+
+    # Add a flag for each customer indicating if GSTIN is present
+    for customer in customers:
+        if customer.get("gstin"):
+            customer["has_gstin"] = True
+        else:
+            customer["has_gstin"] = False
+
     return {"message": customers}
 
 @frappe.whitelist()
@@ -284,3 +304,32 @@ def get_employee_location_entries(employee=None):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "get_employee_location_entries error")
         frappe.throw(_("Failed to fetch employee location entries."))
+# frappe_app/api/sales_invoice.py
+import frappe
+from frappe import _
+
+@frappe.whitelist(allow_guest=False)
+def get_sales_invoice_list():
+    invoices = frappe.get_all("Sales Invoice", filters={"docstatus": 1}, fields=[
+        "name", "customer", "posting_date", "due_date", "grand_total", "outstanding_amount", "status"
+    ], order_by="posting_date desc")
+
+    result = []
+
+    for inv in invoices:
+        items = frappe.get_all("Sales Invoice Item", filters={"parent": inv.name}, fields=[
+            "item_code", "item_name", "qty", "rate", "amount", "description"
+        ])
+
+        result.append({
+            "invoice_id": inv.name,
+            "customer": inv.customer,
+            "posting_date": inv.posting_date,
+            "due_date": inv.due_date,
+            "grand_total": inv.grand_total,
+            "outstanding_amount": inv.outstanding_amount,
+            "status": inv.status,
+            "items": items
+        })
+
+    return {"invoices": result}
