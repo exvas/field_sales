@@ -233,6 +233,7 @@ def get_sales_orders_with_details():
             "name": doc.name,
             "customer": doc.customer,
             "delivery_date": doc.delivery_date,
+            "Total":doc.total,
             "items": [
                 {
                     "item_code": item.item_code,
