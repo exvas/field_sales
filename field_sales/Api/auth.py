@@ -505,6 +505,52 @@ def get_customer_sales_invoices(customer):
             "status": "error",
             "message": str(e)
         }
+# @frappe.whitelist(allow_guest=True)
+# def get_customer_sales_invoices(customer):
+#     try:
+#         invoices = frappe.get_all(
+#             "Sales Invoice",
+#             filters={"customer": customer, "docstatus": 1},
+#             fields=["name", "posting_date", "due_date", "grand_total", "outstanding_amount"],
+#             order_by="posting_date desc"
+#         )
+
+#         invoice_data = []
+#         total_outstanding = 0
+
+#         for inv in invoices:
+#             items = frappe.get_all(
+#                 "Sales Invoice Item",
+#                 filters={"parent": inv.name},
+#                 fields=["item_code", "item_name", "qty", "rate", "amount"]
+#             )
+
+#             total_outstanding += inv.outstanding_amount or 0
+
+#             invoice_data.append({
+#                 "invoice_name": inv.name,
+#                 "posting_date": inv.posting_date,
+#                 "due_date": inv.due_date,
+#                 "grand_total": inv.grand_total,
+#                 "outstanding_amount": inv.outstanding_amount,
+#                 "items": items
+#             })
+
+#         return {
+#             "status": "success",
+#             "customer": customer,
+#             "invoice_count": len(invoice_data),
+#             "total_outstanding_amount": total_outstanding,
+#             "invoices": invoice_data
+#         }
+
+#     except Exception as e:
+#         frappe.log_error(frappe.get_traceback(), "get_customer_sales_invoices")
+#         return {
+#             "status": "error",
+#             "message": str(e)
+#         }
+
 @frappe.whitelist(allow_guest=True)
 def get_customer_sales_invoices(customer):
     try:
@@ -519,11 +565,36 @@ def get_customer_sales_invoices(customer):
         total_outstanding = 0
 
         for inv in invoices:
+            # Fetch items in the invoice
             items = frappe.get_all(
                 "Sales Invoice Item",
                 filters={"parent": inv.name},
                 fields=["item_code", "item_name", "qty", "rate", "amount"]
             )
+
+            # Fetch Payment Entries linked to this Sales Invoice
+            payment_refs = frappe.get_all(
+                "Payment Entry Reference",
+                filters={
+                    "reference_doctype": "Sales Invoice",
+                    "reference_name": inv.name
+                },
+                fields=["parent", "allocated_amount"]
+            )
+
+            # Now get the details of those payment entries
+            payments = []
+            for ref in payment_refs:
+                payment = frappe.get_doc("Payment Entry", ref.parent)
+
+                payments.append({
+                    "payment_entry": payment.name,
+                    "posting_date": payment.posting_date,
+                    "mode_of_payment": payment.mode_of_payment,
+                    "paid_amount": payment.paid_amount,
+                    "allocated_amount": ref.allocated_amount,
+                    "status": payment.status
+                })
 
             total_outstanding += inv.outstanding_amount or 0
 
@@ -533,7 +604,8 @@ def get_customer_sales_invoices(customer):
                 "due_date": inv.due_date,
                 "grand_total": inv.grand_total,
                 "outstanding_amount": inv.outstanding_amount,
-                "items": items
+                "items": items,
+                "payments": payments  # <- included here
             })
 
         return {
@@ -550,3 +622,56 @@ def get_customer_sales_invoices(customer):
             "status": "error",
             "message": str(e)
         }
+
+@frappe.whitelist()
+def get_location_data(employee=None, date=None):
+    if not employee:
+        frappe.throw(_("Employee is required"))
+    if not date:
+        frappe.throw(_("Date is required"))
+
+    try:
+        # Get Employee Location Logs for the date
+        logs = frappe.get_all(
+            "Employee Location Log",
+            filters={
+                "employee": employee,
+                "date": date
+            },
+            fields=["name"]
+        )
+
+        log_names = [log.name for log in logs]
+
+        location_entries = []
+        if log_names:
+            # Get Employee Location Entries
+            location_entries = frappe.get_all(
+                "Employee Location Entry",
+                filters={"parent": ["in", log_names]},
+                fields=["parent", "latitude", "longitude", "creation", "time"],
+                order_by="creation asc"
+            )
+
+            for entry in location_entries:
+                if entry.get("time"):
+                    entry["time"] = frappe.utils.format_time(entry["time"])
+
+        # Get Customer Visit Log for the employee and date
+        visit_logs = frappe.get_all(
+            "Customer Visit Log",
+            filters={
+                "employee": employee,
+                "date": date
+            },
+            fields=["name", "customer_name","latitude", "longitude","time"]
+        )
+
+        return {
+            "location_entries": location_entries,
+            "customer_visits": visit_logs
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "get_employee_location_entries error")
+        frappe.throw(_("Failed to fetch employee location and visit data."))
