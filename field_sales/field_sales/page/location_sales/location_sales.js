@@ -530,7 +530,7 @@ frappe.pages['location-sales'].on_page_load = async function(wrapper) {
     const date_input = $('#log_date');
     const button = $('#show_path_btn');
 
-    window.map = L.map('map').setView([20.5937, 78.9629], 6);
+    window.map = L.map('map').setView([20.5937, 78.9629], 6); // Center on India
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: 'Map data © <a href="https://openstreetmap.org">OpenStreetMap</a> contributors',
         maxZoom: 18
@@ -642,11 +642,15 @@ async function fetch_and_render_map(employee, date) {
                 latlngs.push([lat, lon]);
             }
 
-            window.map.fitBounds(L.latLngBounds(latlngs));
+            if (latlngs.length > 1) {
+                window.map.fitBounds(L.latLngBounds(latlngs), { padding: [20, 20] });
+            } else if (latlngs.length === 1) {
+                window.map.setView(latlngs[0], 14);
+            }
 
             if (latlngs.length >= 2) {
                 window.routingControl = L.Routing.control({
-                    waypoints: latlngs.map(p => L.latLng(p[0], p[1])),
+                    waypoints: latlngs.map(([lat, lon]) => L.latLng(lat, lon)),
                     routeWhileDragging: false,
                     addWaypoints: false,
                     draggableWaypoints: false,
