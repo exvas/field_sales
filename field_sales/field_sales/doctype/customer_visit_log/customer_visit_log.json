@@ -1,6 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
+ "autoname": "CV-.##",
  "creation": "2025-07-30 09:57:19.236890",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -54,10 +55,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-07-30 10:08:01.038924",
+ "modified": "2025-08-01 16:35:06.477081",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Customer Visit Log",
+ "naming_rule": "Expression (old style)",
  "owner": "Administrator",
  "permissions": [
   {
