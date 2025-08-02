@@ -730,3 +730,20 @@ def get_location_data(employee=None, date=None):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "get_employee_location_entries error")
         frappe.throw(_("Failed to fetch employee location and visit data."))
+
+@frappe.whitelist()
+def get_mode_of_payment():
+    try:
+        mode=frappe.get_all(
+            "Mode of Payment",
+            fields=["name","execute"]
+                          )
+        for m in mode:
+            m["execute"]=bool(m.get("execute"))
+
+        return mode
+
+
+
+    except Exception as e:
+        frappe.throw("failed to fetch"+str(e))
