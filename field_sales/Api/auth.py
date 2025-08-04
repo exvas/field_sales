@@ -974,3 +974,139 @@ def get_all_employee():
 
         }
     
+@frappe.whitelist(methods=["POST"])
+def location_entry():
+    data = frappe.request.get_json()
+
+    employee_id = data.get("employee_id")
+    employee_name = data.get("employee_name")
+    date = data.get("date")
+    time = data.get("time")
+    longitude = data.get("longitude")
+    latitude = data.get("latitude")
+
+    if not (employee_id and employee_name and date and time and longitude and latitude):
+        return {
+            "status": "error",
+            "message": "Please fill all required fields.",
+            "code": 400
+        }
+
+    try:
+        # Step 1: Check if parent log already exists
+        log_name = frappe.db.get_value("Employee Location Log", {
+            "employee_id": employee_id,
+            "date": date
+        }, "name")
+
+        if log_name:
+            # Step 2: Add entry to existing log
+            doc = frappe.get_doc("Employee Location Log", log_name)
+        else:
+            # Step 3: Create new log
+            doc = frappe.new_doc("Employee Location Log")
+            doc.employee_id = employee_id
+            doc.employee_name = employee_name
+            doc.date = date
+            doc.insert()
+
+        # Step 4: Append location to child table
+        doc.append("employee_location_entry", {
+            "time": time,
+            "longitude": longitude,
+            "latitude": latitude
+        })
+
+        doc.save()
+        frappe.db.commit()
+
+        return {
+            "status": "success",
+            "message": "Location entry saved.",
+            "log_id": doc.name
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Location Entry API Error")
+        return {
+            "status": "error",
+            "message": f"An error occurred: {str(e)}",
+            "code": 500
+        }
+
+@frappe.whitelist(methods=["POST"])
+def create_location_log():
+    data = frappe.request.get_json()
+    employee_id = data.get("employee_id")
+    employee_name = data.get("employee_name")
+    date = data.get("date")
+
+    if not (employee_id and employee_name and date):
+        return {
+            "status": "error",
+            "message": "All fields required.",
+            "code": 400
+        }
+
+    if frappe.db.exists("Employee Location Log", {"employee_id": employee_id, "date": date}):
+        return {
+            "status": "error",
+            "message": "Log already exists for this employee and date.",
+            "code": 409
+        }
+
+    doc = frappe.new_doc("Employee Location Log")
+    doc.employee_id = employee_id
+    doc.employee_name = employee_name
+    doc.date = date
+    doc.insert()
+    frappe.db.commit()
+
+    return {
+        "status": "success",
+        "log_id": doc.name
+    }
+@frappe.whitelist(methods=["POST"])
+def append_location_entry():
+    data = frappe.request.get_json()
+    employee_id = data.get("employee_id")
+    date = data.get("date")
+    entries = data.get("entries")
+
+    if not (employee_id and date and isinstance(entries, list) and entries):
+        return {
+            "status": "error",
+            "message": "Required fields missing or invalid entries.",
+            "code": 400
+        }
+
+    log_name = frappe.db.get_value("Employee Location Log", {
+        "employee_id": employee_id,
+        "date": date
+    })
+
+    if not log_name:
+        return {
+            "status": "error",
+            "message": "Parent log does not exist. Check-in required first.",
+            "code": 404
+        }
+
+    doc = frappe.get_doc("Employee Location Log", log_name)
+
+    for entry in entries:
+        if "time" in entry and "latitude" in entry and "longitude" in entry:
+            doc.append("employee_location_entry", {
+                "time": entry["time"],
+                "latitude": entry["latitude"],
+                "longitude": entry["longitude"]
+            })
+
+    doc.save()
+    frappe.db.commit()
+
+    return {
+        "status": "success",
+        "message": f"{len(entries)} entries saved.",
+        "log_id": log_name
+    }
