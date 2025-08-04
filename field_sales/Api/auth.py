@@ -18,6 +18,71 @@ def response(message, data, success, status_code):
     frappe.local.response["http_status_code"] = status_code
     return
 
+# @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+# def user_login(usr, pwd, device_id=None):
+#     if not usr or not pwd:
+#         frappe.local.response["message"] = {
+#             "success_key": 0,
+#             "message": "Both User and Password are required!",
+#         }
+#         frappe.local.response.http_status_code = 400
+#         return
+
+#     filter_field = "email" if "@" in usr else ("mobile_no" if usr.isdigit() else "username")
+
+#     user = frappe.db.get_value("User", {filter_field: usr}, ["name", "username", "email", "mobile_no", "api_key"], as_dict=True)
+
+#     if not user:
+#         frappe.local.response["message"] = {
+#             "success_key": 0,
+#             "message": f"{filter_field.capitalize()} {usr} Does Not Exist!",
+#         }
+#         frappe.local.response.http_status_code = 404
+#         frappe.log_error(
+#             title="Login Failed", message=f"{filter_field.capitalize()} {usr} Does Not Exist!"
+#         )
+#         return
+
+#     try:
+#         login_manager = frappe.auth.LoginManager()
+#         frappe.form_dict.device = "mobile"
+#         login_manager.authenticate(user=user.name, pwd=pwd)
+#         login_manager.post_login()
+
+#         # Generate API key/secret
+#         api_key, api_secret = generate_keys(user.name)
+
+#         # Fetch user branch
+#         branch = frappe.db.get_value(
+#             "UserBranchSettings",
+#             {"user": user.name},
+#             "branch"
+#         )
+
+#         # ✅ Fetch user roles
+#         roles = frappe.get_roles(user.name)
+
+#         frappe.response["message"] = {
+#             "success_key": 1,
+#             "message": "Authentication success",
+#             "sid": frappe.session.sid,
+#             "api_key": api_key,
+#             "api_secret": api_secret,
+#             "username": user.username,
+#             "email": user.email,
+#             "mobile_no": user.mobile_no,
+#             "branch": branch or "Not Assigned",
+#             "roles": roles  # 👈 Add roles here
+#         }
+
+#     except frappe.exceptions.AuthenticationError:
+#         frappe.clear_messages()
+#         frappe.local.response["message"] = {
+#             "success_key": 0,
+#             "message": "Incorrect password!",
+#         }
+#         frappe.local.response.http_status_code = 401
+
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 def user_login(usr, pwd, device_id=None):
     if not usr or not pwd:
@@ -28,18 +93,26 @@ def user_login(usr, pwd, device_id=None):
         frappe.local.response.http_status_code = 400
         return
 
+    # Determine which field to use to find user
     filter_field = "email" if "@" in usr else ("mobile_no" if usr.isdigit() else "username")
 
-    user = frappe.db.get_value("User", {filter_field: usr}, ["name", "username", "email", "mobile_no", "api_key"], as_dict=True)
+    # Get user record
+    user = frappe.db.get_value(
+        "User",
+        {filter_field: usr},
+        ["name", "username", "email", "mobile_no", "api_key"],
+        as_dict=True
+    )
 
     if not user:
         frappe.local.response["message"] = {
             "success_key": 0,
-            "message": f"{filter_field.capitalize()} {usr} Does Not Exist!",
+            "message": f"{filter_field.capitalize()} {usr} does not exist!",
         }
         frappe.local.response.http_status_code = 404
         frappe.log_error(
-            title="Login Failed", message=f"{filter_field.capitalize()} {usr} Does Not Exist!"
+            title="Login Failed",
+            message=f"{filter_field.capitalize()} {usr} does not exist!"
         )
         return
 
@@ -52,16 +125,33 @@ def user_login(usr, pwd, device_id=None):
         # Generate API key/secret
         api_key, api_secret = generate_keys(user.name)
 
-        # Fetch user branch
+        # Get branch (if any)
         branch = frappe.db.get_value(
             "UserBranchSettings",
             {"user": user.name},
             "branch"
         )
 
-        # ✅ Fetch user roles
+        # ✅ Get roles
         roles = frappe.get_roles(user.name)
 
+        # ✅ Default values
+        employee_id = ""
+        employee_name = ""
+
+        # ✅ If user is an employee, fetch linked employee record
+        if "Employee" in roles:
+            emp = frappe.db.get_value(
+                "Employee",
+                {"user_id": user.name},
+                ["name", "employee_name"],
+                as_dict=True
+            )
+            if emp:
+                employee_id = emp.name
+                employee_name = emp.employee_name
+
+        # ✅ Response
         frappe.response["message"] = {
             "success_key": 1,
             "message": "Authentication success",
@@ -72,7 +162,9 @@ def user_login(usr, pwd, device_id=None):
             "email": user.email,
             "mobile_no": user.mobile_no,
             "branch": branch or "Not Assigned",
-            "roles": roles  # 👈 Add roles here
+            "roles": roles,
+            "employee_id": employee_id,
+            "employee_name": employee_name
         }
 
     except frappe.exceptions.AuthenticationError:
@@ -82,6 +174,7 @@ def user_login(usr, pwd, device_id=None):
             "message": "Incorrect password!",
         }
         frappe.local.response.http_status_code = 401
+
 
 def set_device_to_mobile():
     # Ensure session exists before modifying
@@ -842,3 +935,42 @@ def create_sales_return():
             "message": f"An error occurred: {str(e)}",
             "code": 500
         }
+
+@frappe.whitelist(allow_guest=True)
+def get_sales_returns():
+    try:
+        sales_returns = frappe.get_all(
+            "Sales Return",
+            fields=["name", "sales_invoice_id", "product_name", "qty", "reason", "date", "notes", "status"],
+            order_by="creation desc"
+        )
+
+        return {
+            "status": "success",
+            "data": sales_returns
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Get Sales Return API Error")
+        return {
+            "status": "error",
+            "message": f"An error occurred: {str(e)}",
+            "code": 500
+        }
+@frappe.whitelist()
+def get_all_employee():
+    try:
+        employee=frappe.get_all("Employee",fields=["name","employee_name"])
+        return{
+             "status":"success",
+             "employee":employee,
+             "code":200
+         }
+    except Exception as e:
+        return{
+            "status":"error",
+            "message":f"an error occured: {str(e)}",
+            "code":500
+
+        }
+    
