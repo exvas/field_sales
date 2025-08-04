@@ -912,11 +912,11 @@ def create_sales_return():
 
     try:
         doc = frappe.new_doc("Sales Return")
-        doc.invoice_name = invoice_name
+        doc.sales_invoice_id = invoice_name
         doc.product_name = product_name
         doc.qty = qty
         doc.reason = reason
-        doc.buying_date = buying_date
+        doc.date = buying_date
         doc.notes = notes
         doc.status = "Open"
         doc.insert()
