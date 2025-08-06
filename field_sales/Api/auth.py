@@ -958,21 +958,54 @@ def get_sales_returns():
             "code": 500
         }
 @frappe.whitelist()
-def get_all_employee():
-    try:
-        employee=frappe.get_all("Employee",fields=["name","employee_name"])
-        return{
-             "status":"success",
-             "employee":employee,
-             "code":200
-         }
-    except Exception as e:
-        return{
-            "status":"error",
-            "message":f"an error occured: {str(e)}",
-            "code":500
+def payment_entry_status():
+    customer_name = frappe.request.args.get("customer_name")
+    if not customer_name:
+        return {"status": "error", "message": "Missing customer_name"}
 
-        }
+    # Fetch draft Payment Entries
+    payment_entries = frappe.get_all("Payment Entry",
+        filters={
+            "party_type": "Customer",
+            "party": customer_name,
+            "docstatus": 0  # Draft only
+        },
+        fields=["name", "posting_date", "paid_amount", "reference_no"]
+    )
+
+    result = []
+    total_allocated = 0
+
+    for pe in payment_entries:
+        references = frappe.get_all("Payment Entry Reference",
+            filters={"parent": pe.name},
+            fields=["reference_name", "allocated_amount", "reference_doctype"]
+        )
+
+        ref_list = []
+        for ref in references:
+            total_allocated += ref.allocated_amount or 0
+            ref_list.append({
+                "reference_doctype": ref.reference_doctype,
+                "reference_name": ref.reference_name,
+                "allocated_amount": ref.allocated_amount
+            })
+
+        result.append({
+            "payment_entry": pe.name,
+            "posting_date": pe.posting_date,
+            "paid_amount": pe.paid_amount,
+            "reference_no": pe.reference_no,
+            "status": "Draft",
+            "references": ref_list
+        })
+
+    return {
+        "status": "success",
+        "data": result,
+        "total_allocated_amount": total_allocated
+    }
+
     
 @frappe.whitelist(methods=["POST"])
 def location_entry():
@@ -1033,6 +1066,8 @@ def location_entry():
             "message": f"An error occurred: {str(e)}",
             "code": 500
         }
+    
+
 
 @frappe.whitelist(methods=["POST"])
 def create_location_log():
