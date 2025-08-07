@@ -93,10 +93,8 @@ def user_login(usr, pwd, device_id=None):
         frappe.local.response.http_status_code = 400
         return
 
-    # Determine which field to use to find user
     filter_field = "email" if "@" in usr else ("mobile_no" if usr.isdigit() else "username")
 
-    # Get user record
     user = frappe.db.get_value(
         "User",
         {filter_field: usr},
@@ -122,24 +120,20 @@ def user_login(usr, pwd, device_id=None):
         login_manager.authenticate(user=user.name, pwd=pwd)
         login_manager.post_login()
 
-        # Generate API key/secret
         api_key, api_secret = generate_keys(user.name)
 
-        # Get branch (if any)
         branch = frappe.db.get_value(
             "UserBranchSettings",
             {"user": user.name},
             "branch"
         )
 
-        # ✅ Get roles
         roles = frappe.get_roles(user.name)
 
-        # ✅ Default values
         employee_id = ""
         employee_name = ""
+        sales_person_id = ""
 
-        # ✅ If user is an employee, fetch linked employee record
         if "Employee" in roles:
             emp = frappe.db.get_value(
                 "Employee",
@@ -151,7 +145,13 @@ def user_login(usr, pwd, device_id=None):
                 employee_id = emp.name
                 employee_name = emp.employee_name
 
-        # ✅ Response
+                # ✅ Fetch sales person linked to this employee (assuming such a link exists)
+                sales_person_id = frappe.db.get_value(
+                    "Sales Person",
+                    {"employee": emp.name},
+                    "name"
+                ) or ""
+
         frappe.response["message"] = {
             "success_key": 1,
             "message": "Authentication success",
@@ -164,7 +164,8 @@ def user_login(usr, pwd, device_id=None):
             "branch": branch or "Not Assigned",
             "roles": roles,
             "employee_id": employee_id,
-            "employee_name": employee_name
+            "employee_name": employee_name,
+            "sales_person_id": sales_person_id
         }
 
     except frappe.exceptions.AuthenticationError:
@@ -1006,7 +1007,22 @@ def payment_entry_status():
         "total_allocated_amount": total_allocated
     }
 
-    
+# for return request
+@frappe.whitelist(allow_guest=False)
+def save_fcm_token(fcm_token):
+    employee = frappe.session.user
+    if not employee:
+        frappe.throw("Not logged in")
+
+    doc = frappe.get_doc({
+        "doctype": "FCM Token",
+        "user": employee,
+        "token": fcm_token
+    })
+    doc.insert(ignore_permissions=True)
+    return {"status": "success", "message": "Token saved"}
+
+
 @frappe.whitelist(methods=["POST"])
 def location_entry():
     data = frappe.request.get_json()
@@ -1073,6 +1089,7 @@ def location_entry():
 def create_location_log():
     data = frappe.request.get_json()
     employee_id = data.get("employee_id")
+    print("employeee_id",employee_id)
     employee_name = data.get("employee_name")
     date = data.get("date")
 
@@ -1091,7 +1108,7 @@ def create_location_log():
         }
 
     doc = frappe.new_doc("Employee Location Log")
-    doc.employee_id = employee_id
+    doc.employee = employee_id
     doc.employee_name = employee_name
     doc.date = date
     doc.insert()
@@ -1099,7 +1116,9 @@ def create_location_log():
 
     return {
         "status": "success",
-        "log_id": doc.name
+        "log_id": doc.name,
+        "empl_id":doc.employee_id ,
+        "empl_name": doc.employee_name
     }
 @frappe.whitelist(methods=["POST"])
 def append_location_entry():
@@ -1116,7 +1135,7 @@ def append_location_entry():
         }
 
     log_name = frappe.db.get_value("Employee Location Log", {
-        "employee_id": employee_id,
+        "employee": employee_id,
         "date": date
     })
 
@@ -1131,7 +1150,7 @@ def append_location_entry():
 
     for entry in entries:
         if "time" in entry and "latitude" in entry and "longitude" in entry:
-            doc.append("employee_location_entry", {
+            doc.append("locations", {
                 "time": entry["time"],
                 "latitude": entry["latitude"],
                 "longitude": entry["longitude"]
@@ -1144,4 +1163,54 @@ def append_location_entry():
         "status": "success",
         "message": f"{len(entries)} entries saved.",
         "log_id": log_name
+    }
+
+@frappe.whitelist(methods=["POST"])
+def save_salesperson_location_log():
+    data = frappe.request.get_json()
+    salesperson_id = data.get("sales_person_id")  # Now expect this field directly
+    date = data.get("date")
+    entries = data.get("entries", [])
+
+    if not (salesperson_id and date):
+        return {
+            "status": "error",
+            "message": "Sales Person ID and Date are required.",
+            "code": 400
+        }
+
+    # 🔍 Check for existing log by sales_person_id and date
+    log_name = frappe.db.get_value("Employee Location Log", {
+        "employee": salesperson_id,
+        "date": date
+    })
+
+    if log_name:
+        doc = frappe.get_doc("Employee Location Log", log_name)
+        new_log_created = False
+    else:
+        doc = frappe.new_doc("Employee Location Log")
+        doc.employee = salesperson_id
+        doc.date = date
+        new_log_created = True
+
+    # ➕ Append valid entries
+    added = 0
+    for entry in entries:
+        if "time" in entry and "latitude" in entry and "longitude" in entry:
+            doc.append("locations", {
+                "time": entry["time"],
+                "latitude": entry["latitude"],
+                "longitude": entry["longitude"]
+            })
+            added += 1
+
+    doc.save(ignore_permissions=True)
+    frappe.db.commit()
+
+    return {
+        "status": "success",
+        "message": f"{'Log created. ' if new_log_created else ''}{added} location entries saved.",
+        "log_id": doc.name,
+        "sales_person_id": salesperson_id
     }

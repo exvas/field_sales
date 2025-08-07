@@ -6,7 +6,6 @@
  "engine": "InnoDB",
  "field_order": [
   "employee",
-  "employee_name",
   "date",
   "locations",
   "map_html"
@@ -15,8 +14,8 @@
   {
    "fieldname": "employee",
    "fieldtype": "Link",
-   "label": "Employee",
-   "options": "Employee"
+   "label": "Sales Person Id",
+   "options": "Sales Person"
   },
   {
    "fieldname": "date",
@@ -34,17 +33,12 @@
    "fieldtype": "HTML",
    "label": "Location Map",
    "read_only": 1
-  },
-  {
-   "fieldname": "employee_name",
-   "fieldtype": "Data",
-   "label": "Employee Name"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-04 11:20:14.289226",
+ "modified": "2025-08-07 12:19:37.010450",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Employee Location Log",
