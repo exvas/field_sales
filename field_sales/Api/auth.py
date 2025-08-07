@@ -1203,15 +1203,18 @@ def save_salesperson_location_log():
         new_log_created = True
 
     # ➕ Append valid entries
+   # ➕ Append valid entries
     added = 0
     for entry in entries:
         if "time" in entry and "latitude" in entry and "longitude" in entry:
             doc.append("locations", {
                 "time": entry["time"],
                 "latitude": entry["latitude"],
-                "longitude": entry["longitude"]
+                "longitude": entry["longitude"],
+                "entry_type": entry.get("entry_type", "Track")  # Default to 'Track' if not provided
             })
             added += 1
+
 
     doc.save(ignore_permissions=True)
     frappe.db.commit()

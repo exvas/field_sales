@@ -287,7 +287,7 @@ frappe.pages['location-sales'].on_page_load = async function(wrapper) {
             </div>
         </div>
     `);
-
+    document.getElementById("log_date").valueAsDate = new Date();
     let employee_control = frappe.ui.form.make_control({
         parent: $('#employee_link'),
         df: {
