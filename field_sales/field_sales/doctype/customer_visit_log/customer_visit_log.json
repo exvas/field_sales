@@ -9,17 +9,19 @@
   "employee",
   "date",
   "customer_name",
+  "column_break_vbdw",
   "longitude",
   "latitude",
-  "description",
-  "time"
+  "time",
+  "section_break_gze3",
+  "description"
  ],
  "fields": [
   {
    "fieldname": "employee",
    "fieldtype": "Link",
-   "label": "Employee",
-   "options": "Employee"
+   "label": "Sales Person Id",
+   "options": "Sales Person"
   },
   {
    "fieldname": "date",
@@ -50,12 +52,20 @@
    "fieldname": "time",
    "fieldtype": "Time",
    "label": "Time"
+  },
+  {
+   "fieldname": "column_break_vbdw",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_gze3",
+   "fieldtype": "Section Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-01 16:35:06.477081",
+ "modified": "2025-08-07 14:39:39.113333",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Customer Visit Log",

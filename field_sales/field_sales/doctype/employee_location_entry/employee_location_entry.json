@@ -33,6 +33,7 @@
   {
    "fieldname": "entry_type",
    "fieldtype": "Select",
+   "in_list_view": 1,
    "label": "Entry Type",
    "options": "Check In\nCheck Out\nTrack"
   }
@@ -41,7 +42,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2025-07-29 13:42:26.506905",
+ "modified": "2025-08-07 14:40:22.207264",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Employee Location Entry",
