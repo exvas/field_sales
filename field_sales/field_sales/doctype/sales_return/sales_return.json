@@ -9,10 +9,13 @@
   "sales_invoice_id",
   "product_name",
   "qty",
-  "reason",
-  "notes",
+  "column_break_sroc",
   "date",
-  "status"
+  "reason",
+  "sales_person_id",
+  "status",
+  "section_break_ipel",
+  "notes"
  ],
  "fields": [
   {
@@ -53,12 +56,26 @@
    "fieldtype": "Select",
    "label": "Status",
    "options": "Open\nApproved\nRejected"
+  },
+  {
+   "fieldname": "sales_person_id",
+   "fieldtype": "Link",
+   "label": "Sales Person Id",
+   "options": "Sales Person"
+  },
+  {
+   "fieldname": "column_break_sroc",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_ipel",
+   "fieldtype": "Section Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-04 11:07:51.952175",
+ "modified": "2025-08-07 14:37:25.793389",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Sales Return",

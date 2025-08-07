@@ -316,6 +316,8 @@ def get_customers():
 def create_sales_order():
     data=frappe.request.get_json()
     customer_name=data.get("customer")
+    sales_person=data.get("sales_person")
+    
     if not frappe.db.exists("Customer", customer_name):
         return {
             "status": "error",
@@ -326,6 +328,7 @@ def create_sales_order():
     so = frappe.get_doc({
         "doctype": "Sales Order",
         "customer": customer_name,
+        "custom_sales_person":sales_person,
         "delivery_date": data.get("delivery_date"),
         "items": data.get("items")
     })
@@ -336,6 +339,7 @@ def create_sales_order():
         "status": "success",
         "sales_order": so.name
     }
+
 @frappe.whitelist()
 def get_sales_orders_with_details():
     sales_order_names = frappe.get_all("Sales Order", fields=["name"])
@@ -856,6 +860,7 @@ def create_payment_entry_from_sales_invoices():
         data = json.loads(frappe.request.data)
 
     customer = data.get("customer")
+    # sales_person=data.get("sales_person")
     total_allocated_amount = data.get("total_allocated_amount")
     mode_of_payment = data.get("mode_of_payment")
     invoice_allocations = data.get("invoice_allocations", [])
@@ -869,6 +874,7 @@ def create_payment_entry_from_sales_invoices():
     pe.party_type = "Customer"
     pe.party = customer
     pe.posting_date = now()
+    pe.custom_sales_person=sales_person
     pe.mode_of_payment = mode_of_payment
     pe.paid_amount = total_allocated_amount
     pe.received_amount = total_allocated_amount
@@ -897,6 +903,7 @@ def create_sales_return():
     data = frappe.request.get_json()
 
     invoice_name = data.get("invoice_name")
+    sales_person=data.get("sales_person")
     product_name = data.get("product_name")
     qty = data.get("qty")
     reason = data.get("reason")
@@ -919,6 +926,7 @@ def create_sales_return():
         doc.reason = reason
         doc.date = buying_date
         doc.notes = notes
+        doc.sales_person_id=sales_person
         doc.status = "Open"
         doc.insert()
         frappe.db.commit()
