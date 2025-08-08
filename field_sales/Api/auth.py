@@ -452,19 +452,43 @@ def get_employee_location_entries(employee=None):
 
 #     return {"invoices": result}
 
+import frappe
+
 @frappe.whitelist(allow_guest=False)
 def get_sales_invoice_list():
-    invoices = frappe.get_all("Sales Invoice", filters={"docstatus": 1}, fields=[
-        "name", "customer", "posting_date", "due_date", "grand_total", "outstanding_amount", "status"
-    ], order_by="posting_date desc")
+    # Get sales_person from URL params
+    sales_person = frappe.request.args.get("sales_person")
+    if not sales_person:
+        return {
+            "status": "error",
+            "message": "Missing sales_person parameter"
+        }
+
+    # Fetch only invoices matching this sales person
+    invoices = frappe.get_all(
+        "Sales Invoice",
+        filters={
+            "docstatus": 1,
+            "custom_sales_person": sales_person  # ✅ Filter by custom field
+        },
+        fields=[
+            "name", "customer", "posting_date", "due_date",
+            "grand_total", "outstanding_amount", "status"
+        ],
+        order_by="posting_date desc"
+    )
 
     result = []
 
     for inv in invoices:
         # Fetch Sales Invoice Items
-        items = frappe.get_all("Sales Invoice Item", filters={"parent": inv.name}, fields=[
-            "item_code", "item_name", "qty", "rate", "amount", "description"
-        ])
+        items = frappe.get_all(
+            "Sales Invoice Item",
+            filters={"parent": inv.name},
+            fields=[
+                "item_code", "item_name", "qty", "rate", "amount", "description"
+            ]
+        )
 
         # Fetch Payment Entry References linked to this Sales Invoice
         payment_refs = frappe.get_all(
@@ -504,8 +528,12 @@ def get_sales_invoice_list():
             "payments": payments
         })
 
-    return {"invoices": result}
-
+    return {
+        "status": "success",
+        "sales_person": sales_person,
+        "invoice_count": len(result),
+        "invoices": result
+    }
 
 # import frappe
 # from frappe.utils import nowdate
@@ -678,41 +706,77 @@ def pay_sales_invoice():
 #             "status": "error",
 #             "message": str(e)
 #         }
-import frappe
 
 @frappe.whitelist()
 def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None):
     if not sales_person:
         frappe.throw("Sales Person ID is required")
 
+    # Build filters
     filters = {
-        "docstatus": 1,  # Submitted invoices
+        "docstatus": 1,  # Submitted invoices only
         "custom_sales_person": sales_person
     }
 
     if customer:
         filters["customer"] = customer
 
-    invoices = frappe.get_all(
-        "Sales Invoice",
-        filters=filters,
-        fields=[
-            "name",
-            "customer",
-            "posting_date",
-            "due_date",
-            "grand_total",
-            "outstanding_amount",
-            "status"
-        ],
-        order_by="posting_date desc"
-    )
+    try:
+        # Fetch invoices based on filters
+        invoices = frappe.get_all(
+            "Sales Invoice",
+            filters=filters,
+            fields=[
+                "name",
+                "customer",
+                "posting_date",
+                "due_date",
+                "grand_total",
+                "outstanding_amount",
+                "status"
+            ],
+            order_by="posting_date desc"
+        )
 
-    return {
-        "status": "success",
-        "sales_invoices": invoices
-    }
+        invoice_data = []
+        total_outstanding = 0
 
+        for inv in invoices:
+            # Get items for each invoice
+            items = frappe.get_all(
+                "Sales Invoice Item",
+                filters={"parent": inv.name},
+                fields=["item_code", "item_name", "qty", "rate", "amount"]
+            )
+
+            total_outstanding += inv.outstanding_amount or 0
+
+            invoice_data.append({
+                "invoice_name": inv.name,
+                "customer": inv.customer,
+                "posting_date": inv.posting_date,
+                "due_date": inv.due_date,
+                "grand_total": inv.grand_total,
+                "outstanding_amount": inv.outstanding_amount,
+                "status": inv.status,
+                "items": items
+            })
+
+        return {
+            "status": "success",
+            "sales_person": sales_person,
+            "customer": customer,
+            "invoice_count": len(invoice_data),
+            "total_outstanding_amount": total_outstanding,
+            "invoices": invoice_data
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "get_customer_sales_invoices_by_salesperson")
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 
 # @frappe.whitelist(allow_guest=True)
@@ -957,11 +1021,34 @@ def create_sales_return():
         }
 
 @frappe.whitelist(allow_guest=True)
-def get_sales_returns():
+def get_sales_returns(sales_person=None):
     try:
+        # Make sales_person_id mandatory
+        if not sales_person:
+            return {
+                "status": "error",
+                "message": "Sales Person ID is required",
+                "code": 400
+            }
+
+        filters = {
+            "sales_person_id": sales_person
+        }
+
         sales_returns = frappe.get_all(
             "Sales Return",
-            fields=["name", "sales_invoice_id", "product_name", "qty", "reason", "date", "notes", "status"],
+            filters=filters,
+            fields=[
+                "name", 
+                "sales_invoice_id", 
+                "product_name", 
+                "qty", 
+                "reason", 
+                "date", 
+                "notes", 
+                "status", 
+                "sales_person_id"
+            ],
             order_by="creation desc"
         )
 
@@ -977,17 +1064,26 @@ def get_sales_returns():
             "message": f"An error occurred: {str(e)}",
             "code": 500
         }
+
 @frappe.whitelist()
 def payment_entry_status():
+    # Get parameters from URL query string
     customer_name = frappe.request.args.get("customer_name")
+    sales_person = frappe.request.args.get("sales_person")
+
+    # Validate required parameters
     if not customer_name:
         return {"status": "error", "message": "Missing customer_name"}
+    if not sales_person:
+        return {"status": "error", "message": "Missing sales_person"}
 
-    # Fetch draft Payment Entries
-    payment_entries = frappe.get_all("Payment Entry",
+    # Fetch Draft Payment Entries for given customer & sales person
+    payment_entries = frappe.get_all(
+        "Payment Entry",
         filters={
             "party_type": "Customer",
             "party": customer_name,
+            "custom_sales_person": sales_person,  # ✅ Filter by custom_sales_person
             "docstatus": 0  # Draft only
         },
         fields=["name", "posting_date", "paid_amount", "reference_no"]
@@ -997,7 +1093,9 @@ def payment_entry_status():
     total_allocated = 0
 
     for pe in payment_entries:
-        references = frappe.get_all("Payment Entry Reference",
+        # Fetch related invoice references
+        references = frappe.get_all(
+            "Payment Entry Reference",
             filters={"parent": pe.name},
             fields=["reference_name", "allocated_amount", "reference_doctype"]
         )
@@ -1025,6 +1123,7 @@ def payment_entry_status():
         "data": result,
         "total_allocated_amount": total_allocated
     }
+
 
 # for return request
 @frappe.whitelist(allow_guest=False)
