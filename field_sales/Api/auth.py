@@ -134,23 +134,30 @@ def user_login(usr, pwd, device_id=None):
         employee_name = ""
         sales_person_id = ""
 
-        if "Employee" in roles:
-            emp = frappe.db.get_value(
-                "Employee",
-                {"user_id": user.name},
-                ["name", "employee_name"],
-                as_dict=True
-            )
-            if emp:
-                employee_id = emp.name
-                employee_name = emp.employee_name
+        # ✅ Check if user has "Sales Person" role before proceeding
+        if "Sales Person" not in roles:
+            frappe.local.response["message"] = {
+                "success_key": 0,
+                "message": "Access denied! You do not have the Sales Person role assigned.",
+            }
+            frappe.local.response.http_status_code = 403
+            return
 
-                # ✅ Fetch sales person linked to this employee (assuming such a link exists)
-                sales_person_id = frappe.db.get_value(
-                    "Sales Person",
-                    {"employee": emp.name},
-                    "name"
-                ) or ""
+        # ✅ Now fetch sales person ID if the role exists
+        emp = frappe.db.get_value(
+            "Employee",
+            {"user_id": user.name},
+            ["name", "employee_name"],
+            as_dict=True
+        )
+        if emp:
+            employee_id = emp.name
+            employee_name = emp.employee_name
+            sales_person_id = frappe.db.get_value(
+                "Sales Person",
+                {"employee": emp.name},
+                "name"
+            ) or ""
 
         frappe.response["message"] = {
             "success_key": 1,
@@ -175,7 +182,6 @@ def user_login(usr, pwd, device_id=None):
             "message": "Incorrect password!",
         }
         frappe.local.response.http_status_code = 401
-
 
 def set_device_to_mobile():
     # Ensure session exists before modifying
@@ -874,7 +880,7 @@ def create_payment_entry_from_sales_invoices():
     pe.party_type = "Customer"
     pe.party = customer
     pe.posting_date = now()
-    pe.custom_sales_person=sales_person
+    pe.custom_sales_person=data.get("sales_person")
     pe.mode_of_payment = mode_of_payment
     pe.paid_amount = total_allocated_amount
     pe.received_amount = total_allocated_amount
