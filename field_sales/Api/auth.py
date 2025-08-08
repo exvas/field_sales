@@ -347,17 +347,31 @@ def create_sales_order():
     }
 
 @frappe.whitelist()
-def get_sales_orders_with_details():
-    sales_order_names = frappe.get_all("Sales Order", fields=["name"])
-    
+def get_sales_orders_with_details(sales_person_id=None):
+    if not sales_person_id:
+        return {
+            "status": "error",
+            "message": "Sales Person ID is required"
+        }
+
+    # ✅ Filter directly with the custom_sales_person field in Sales Order
+    sales_order_names = frappe.get_all(
+        "Sales Order",
+        filters={
+            "custom_sales_person": sales_person_id,
+            "docstatus": 1  # Only submitted orders
+        },
+        pluck="name"
+    )
+
     sales_orders = []
-    for so in sales_order_names:
-        doc = frappe.get_doc("Sales Order", so.name)
+    for so_name in sales_order_names:
+        doc = frappe.get_doc("Sales Order", so_name)
         sales_orders.append({
             "name": doc.name,
             "customer": doc.customer,
             "delivery_date": doc.delivery_date,
-            "Total":doc.total,
+            "Total": doc.total,
             "items": [
                 {
                     "item_code": item.item_code,
@@ -664,51 +678,42 @@ def pay_sales_invoice():
 #             "status": "error",
 #             "message": str(e)
 #         }
-@frappe.whitelist(allow_guest=True)
-def get_customer_sales_invoices(customer):
-    try:
-        invoices = frappe.get_all(
-            "Sales Invoice",
-            filters={"customer": customer, "docstatus": 1},
-            fields=["name", "posting_date", "due_date", "grand_total", "outstanding_amount"],
-            order_by="posting_date desc"
-        )
+import frappe
 
-        invoice_data = []
-        total_outstanding = 0
+@frappe.whitelist()
+def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None):
+    if not sales_person:
+        frappe.throw("Sales Person ID is required")
 
-        for inv in invoices:
-            items = frappe.get_all(
-                "Sales Invoice Item",
-                filters={"parent": inv.name},
-                fields=["item_code", "item_name", "qty", "rate", "amount"]
-            )
+    filters = {
+        "docstatus": 1,  # Submitted invoices
+        "custom_sales_person": sales_person
+    }
 
-            total_outstanding += inv.outstanding_amount or 0
+    if customer:
+        filters["customer"] = customer
 
-            invoice_data.append({
-                "invoice_name": inv.name,
-                "posting_date": inv.posting_date,
-                "due_date": inv.due_date,
-                "grand_total": inv.grand_total,
-                "outstanding_amount": inv.outstanding_amount,
-                "items": items
-            })
+    invoices = frappe.get_all(
+        "Sales Invoice",
+        filters=filters,
+        fields=[
+            "name",
+            "customer",
+            "posting_date",
+            "due_date",
+            "grand_total",
+            "outstanding_amount",
+            "status"
+        ],
+        order_by="posting_date desc"
+    )
 
-        return {
-            "status": "success",
-            "customer": customer,
-            "invoice_count": len(invoice_data),
-            "total_outstanding_amount": total_outstanding,
-            "invoices": invoice_data
-        }
+    return {
+        "status": "success",
+        "sales_invoices": invoices
+    }
 
-    except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "get_customer_sales_invoices")
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+
 
 # @frappe.whitelist(allow_guest=True)
 # def get_customer_sales_invoices(customer):
