@@ -1225,3 +1225,31 @@ def save_salesperson_location_log():
         "log_id": doc.name,
         "sales_person_id": salesperson_id
     }
+
+
+
+@frappe.whitelist(allow_guest=False)
+def log_customer_visit():
+    import json
+    data = json.loads(frappe.request.data)
+
+    required_fields = ["sales_person", "date", "time", "longitude", "latitude", "customer_name"]
+    for field in required_fields:
+        if not data.get(field):
+            frappe.throw(_("Missing required field: {0}").format(field))
+
+    doc = frappe.new_doc("Customer Visit Log")
+    doc.employee = data["sales_person"]
+    doc.date = data["date"]
+    doc.time = data["time"]
+    doc.longitude = data["longitude"]
+    doc.latitude = data["latitude"]
+    doc.customer_name = data["customer_name"]
+    doc.description = data.get("description", "")
+    doc.insert()
+
+    return {
+        "success": True,
+        "message": "Customer Visit Log created successfully",
+        "name": doc.name
+    }
