@@ -1363,3 +1363,86 @@ def log_customer_visit():
         "message": "Customer Visit Log created successfully",
         "name": doc.name
     }
+
+@frappe.whitelist(allow_guest=False)
+def get_all_sales_invoice_ids():
+    try:
+        invoices = frappe.get_all(
+            "Sales Invoice",
+            filters={"docstatus": 1},  # Only submitted invoices
+            pluck="name"  # Returns only the "name" field (invoice ID)
+        )
+
+        return {
+            "status": "success",
+            "code": 200,
+            "message": "Successfully fetched all sales invoice IDs",
+            "data": invoices
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "API Error: get_all_sales_invoice_ids")
+        return {
+            "status": "error",
+            "code": 500,
+            "message": f"An unexpected error occurred: {str(e)}",
+            "data": None
+        }
+
+@frappe.whitelist()
+def sales_invoice_detail_by_ids():
+    try:
+        invoice_id = frappe.form_dict.get("invoice_id")
+
+        # Check if invoice_id is provided
+        if not invoice_id:
+            return {
+                "status": "error",
+                "code": 400,
+                "message": "invoice_id is required",
+                "data": None
+            }
+
+        # Try to get the Sales Invoice
+        try:
+            invoice = frappe.get_doc("Sales Invoice", invoice_id)
+        except frappe.DoesNotExistError:
+            return {
+                "status": "error",
+                "code": 404,
+                "message": f"Sales Invoice '{invoice_id}' does not exist",
+                "data": None
+            }
+
+        # Prepare data
+        data = {
+            "posting_date": invoice.posting_date,
+            "customer": invoice.customer,
+            "items": [
+                {
+                    "item_code": item.item_code,
+                    "item_name": item.item_name,
+                    "qty": item.qty,
+                    "rate": item.rate,
+                    "amount": item.amount
+                }
+                for item in invoice.items
+            ]
+        }
+
+        # Success response
+        return {
+            "status": "success",
+            "code": 200,
+            "message": "Sales Invoice fetched successfully",
+            "data": data
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "API Error: sales_invoice_detail_by_ids")
+        return {
+            "status": "error",
+            "code": 500,
+            "message": f"An unexpected error occurred: {str(e)}",
+            "data": None
+        }
