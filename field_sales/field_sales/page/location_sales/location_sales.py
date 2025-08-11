@@ -124,7 +124,7 @@ def get_location_data(sales_person=None, date=None):
             location_entries = frappe.get_all(
                 "Employee Location Entry",
                 filters={"parent": ["in", log_names]},
-                fields=["parent", "latitude", "longitude", "creation", "time"],
+                fields=["parent", "latitude", "longitude", "creation", "time","entry_type"],
                 order_by="creation asc"
             )
 

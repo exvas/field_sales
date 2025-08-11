@@ -136,17 +136,31 @@ async function fetch_and_render_map(sales_person, date) {
                 }
             }
 
+            // if (res.location_entries?.length) {
+            //     for (const entry of res.location_entries) {
+            //         combined.push({
+            //             latitude: entry.latitude,
+            //             longitude: entry.longitude,
+            //             time: entry.time || "N/A",
+            //             label: `Sales Person Log`,
+            //             type: 'sales_person',
+            //             type: entry.entry_type ? entry.entry_type.toLowerCase() : ''
+
+            //         });
+            //     }
+            // }
             if (res.location_entries?.length) {
-                for (const entry of res.location_entries) {
-                    combined.push({
-                        latitude: entry.latitude,
-                        longitude: entry.longitude,
-                        time: entry.time || "N/A",
-                        label: `Sales Person Log`,
-                        type: 'sales_person'
-                    });
-                }
-            }
+    for (const entry of res.location_entries) {
+        combined.push({
+            latitude: entry.latitude,
+            longitude: entry.longitude,
+            time: entry.time || "N/A",
+            label: `Sales Person Location (${entry.entry_type || ''})`,
+            type: entry.entry_type ? entry.entry_type.toLowerCase() : 'sales_person'
+        });
+    }
+}
+
 
             combined.sort((a, b) => new Date(`1970-01-01T${a.time}`) - new Date(`1970-01-01T${b.time}`));
 
