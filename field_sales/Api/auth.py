@@ -1446,3 +1446,20 @@ def sales_invoice_detail_by_ids():
             "message": f"An unexpected error occurred: {str(e)}",
             "data": None
         }
+@frappe.whitelist()
+def get_location_update_interval():
+    try:
+        data=frappe.get_doc("Location Update Settings","Location Update Settings")
+        return{
+            "status":"success",
+            "code":200,
+            "message":f"successfully fetch location update interval",
+            "data":data
+        }
+    except Exception as e:
+        return{
+            "status":"error",
+            "code":500,
+            "message":f"an error occured,{str(e)}"
+
+        }
