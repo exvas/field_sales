@@ -281,6 +281,22 @@ def get_items(price_list="Standard Selling"):
             filters={"item_code": item.name, "price_list": price_list},
             fieldname="price_list_rate"
         )
+    
+        # Get tax template from Item Taxes table
+        tax_template = frappe.db.get_value(
+            "Item Tax",
+            filters={"parent": item.name},
+            fieldname="item_tax_template"
+        )
+
+        # Get GST rate from Item Tax Template Detail (if template exists)
+        gst_rate = None
+        if tax_template:
+            gst_rate = frappe.db.get_value(
+                "Item Tax Template Detail",
+                filters={"parent": tax_template},
+                fieldname="tax_rate"
+            )
 
         result.append({
             "item_code": item.name,
@@ -288,10 +304,13 @@ def get_items(price_list="Standard Selling"):
             "description": item.description,
             "uom": item.stock_uom,
             "price": price or 0.0,
-            "maintain_stock": item.is_stock_item  # True or False
+            "maintain_stock": item.is_stock_item,
+            "tax_template": tax_template or "",
+            "gst_rate": gst_rate or 0.0
         })
 
     return result
+
 
 @frappe.whitelist()
 def get_customers():
@@ -334,11 +353,15 @@ def create_sales_order():
     so = frappe.get_doc({
         "doctype": "Sales Order",
         "customer": customer_name,
+        "company":"tbo",
         "custom_sales_person":sales_person,
         "delivery_date": data.get("delivery_date"),
         "items": data.get("items")
     })
-    so.insert(ignore_permissions=True)
+    so.run_method("set_missing_values")
+    so.run_method("set_other_charges")
+    so.run_method("calculate_taxes_and_totals")
+    so.save()
     so.submit()
 
     return {
@@ -1463,3 +1486,23 @@ def get_location_update_interval():
             "message":f"an error occured,{str(e)}"
 
         }
+
+@frappe.whitelist()
+def get_item_tax():
+    templates = frappe.get_all(
+        "Item Tax Template",
+        fields=["name", "title"]
+    )
+    result = []
+    for t in templates:
+        rates = frappe.get_all(
+            "Item Tax Template Detail",
+            filters={"parent": t.name},
+            fields=["tax_rate"]
+        )
+        result.append({
+            "name": t.name,
+            "title": t.title,
+            "gst_rate": rates[0].tax_rate if rates else 0
+        })
+    return result
