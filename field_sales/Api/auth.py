@@ -1751,25 +1751,42 @@ def get_location_update_interval():
 
         }
 
+# @frappe.whitelist()
+# def get_item_tax():
+#     templates = frappe.get_all(
+#         "Item Tax Template",
+#         fields=["name", "title"]
+#     )
+#     result = []
+#     for t in templates:
+#         rates = frappe.get_all(
+#             "Item Tax Template Detail",
+#             filters={"parent": t.name},
+#             fields=["tax_rate"]
+#         )
+#         result.append({
+#             "name": t.name,
+#             "title": t.title,
+#             "gst_rate": rates[0].tax_rate if rates else 0
+#         })
+#     return result
 @frappe.whitelist()
 def get_item_tax():
     templates = frappe.get_all(
         "Item Tax Template",
-        fields=["name", "title"]
+        fields=["name", "title", "gst_rate"]  # directly fetch gst_rate
     )
+    
     result = []
     for t in templates:
-        rates = frappe.get_all(
-            "Item Tax Template Detail",
-            filters={"parent": t.name},
-            fields=["tax_rate"]
-        )
         result.append({
             "name": t.name,
             "title": t.title,
-            "gst_rate": rates[0].tax_rate if rates else 0
+            "gst_rate": t.gst_rate or 0
         })
+    
     return result
+
 
 # @frappe.whitelist()
 # def create_sales_return_with_invoice_id():
