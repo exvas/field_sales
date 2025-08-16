@@ -1293,9 +1293,8 @@ def create_sales_return():
         }
 
 @frappe.whitelist(allow_guest=True)
-def get_sales_returns(sales_person=None):
+def get_sales_returns(sales_person=None, invoice_id=None):
     try:
-        # Make sales_person_id mandatory
         if not sales_person:
             return {
                 "status": "error",
@@ -1304,25 +1303,35 @@ def get_sales_returns(sales_person=None):
             }
 
         filters = {
-            "sales_person_id": sales_person
+            "is_return": 1,  # ensure only sales returns
+            "custom_sales_person": sales_person
         }
 
+        if invoice_id:  # filter for specific sales invoice if provided
+            filters["return_against"] = invoice_id
+
         sales_returns = frappe.get_all(
-            "Sales Return",
+            "Sales Invoice",
             filters=filters,
             fields=[
-                "name", 
-                "sales_invoice_id", 
-                "product_name", 
-                "qty", 
-                "reason", 
-                "date", 
-                "notes", 
-                "status", 
-                "sales_person_id"
+                "name",
+                "return_against",   # original invoice id if available
+                "customer",
+                "company",
+                "posting_date",
+                "workflow_state",
+                "custom_sales_person"
             ],
             order_by="creation desc"
         )
+
+        # fetch child items for each return
+        for sr in sales_returns:
+            sr["items"] = frappe.get_all(
+                "Sales Invoice Item",
+                filters={"parent": sr["name"]},
+                fields=["item_code", "item_name", "qty", "rate", "amount"]
+            )
 
         return {
             "status": "success",
@@ -1330,7 +1339,7 @@ def get_sales_returns(sales_person=None):
         }
 
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "Get Sales Return API Error")
+        frappe.log_error(frappe.get_traceback(), "Get Sales Returns API Error")
         return {
             "status": "error",
             "message": f"An error occurred: {str(e)}",
