@@ -441,8 +441,9 @@ def get_customers():
 #         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
 #         return {"status": "error", "message": str(e), "code": 417}
 
+# -----
 # @frappe.whitelist(methods=["POST"])
-# def c_salesorder():
+# def create_sales_order():
 #     try:
 #         from frappe.utils import flt
 
@@ -450,7 +451,7 @@ def get_customers():
 #         if not data:
 #             return {"status": "error", "message": "Invalid request data", "code": 400}
 
-#         customer = data.get("customer")  # Customer name, e.g., "Appu"
+#         customer = data.get("customer")  # Customer name
 #         items = data.get("items")
 
 #         if not customer:
@@ -462,15 +463,15 @@ def get_customers():
 #         if not frappe.db.exists("Customer", customer):
 #             return {"status": "error", "message": f"Customer '{customer}' does not exist.", "code": 404}
 
-#         # Company setup
-#         company_name = "tbo"
+#         # ✅ Fetch a company dynamically (first from list, or based on some filter)
+#         company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
 #         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
 
 #         # Create Sales Order document
 #         so = frappe.get_doc({
 #             "doctype": "Sales Order",
 #             "customer": customer,
-#             "company": company_name,
+#             "company": company_name,  # ✅ Auto-picked from company list
 #             "currency": data.get("currency") or default_currency,
 #             "custom_sales_person": data.get("sales_person"),
 #             "delivery_date": data.get("delivery_date"),
@@ -487,20 +488,13 @@ def get_customers():
 #                 "price_list_rate": flt(item.get("rate", 0.0)),
 #             })
 
-#         # Set default taxes & charges from Company or Customer
-#         default_tax_template = frappe.get_cached_value(
-#             "Company",
-#             company_name,
-#             "default_sales_taxes_and_charges"
-#         ) or frappe.get_cached_value(
-#             "Customer",
-#             customer,
-#             "default_sales_taxes_and_charges"
-#         )
+#         # Always set Output GST In-state as taxes_and_charges
+#         # tax_template_name = "Output GST In-state"
+#         # if not frappe.db.exists("Sales Taxes and Charges Template", tax_template_name):
+#         #     return {"status": "error", "message": f"Tax Template '{tax_template_name}' does not exist.", "code": 404}
 
-#         if default_tax_template:
-#             so.taxes_and_charges = default_tax_template
-#             so.set_taxes()  # Load the tax table rows from template
+#         # so.taxes_and_charges = tax_template_name
+#         # so.set_taxes()
 
 #         # Fill in missing values & calculate totals
 #         so.run_method("set_missing_values")
@@ -513,9 +507,9 @@ def get_customers():
 #             "sales_order_id": so.name,
 #             "delivery_date": data.get("delivery_date"),
 #             "customer": customer,
-#             "company": so.company,
+#             "company": so.company,  # ✅ Returned company
 #             "items": items,
-#             "taxes_and_charges": so.taxes_and_charges,
+#             # "taxes_and_charges": so.taxes_and_charges,
 #             "total": so.total,
 #             "grand_total": so.grand_total,
 #             "status": so.status,
@@ -531,6 +525,9 @@ def get_customers():
 #     except Exception as e:
 #         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
 #         return {"status": "error", "message": str(e), "code": 417}
+
+# ----
+
 @frappe.whitelist(methods=["POST"])
 def create_sales_order():
     try:
@@ -540,7 +537,7 @@ def create_sales_order():
         if not data:
             return {"status": "error", "message": "Invalid request data", "code": 400}
 
-        customer = data.get("customer")  # Customer name
+        customer = data.get("customer")
         items = data.get("items")
 
         if not customer:
@@ -548,26 +545,40 @@ def create_sales_order():
         if not items or not isinstance(items, list):
             return {"status": "error", "message": "At least one item is required", "code": 400}
 
-        # Check if customer exists
+        # ✅ Check if customer exists
         if not frappe.db.exists("Customer", customer):
             return {"status": "error", "message": f"Customer '{customer}' does not exist.", "code": 404}
 
-        # ✅ Fetch a company dynamically (first from list, or based on some filter)
+        # ✅ Fetch a company dynamically
         company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
 
-        # Create Sales Order document
+        # ✅ Fetch default Sales Taxes and Charges Template from Accounting
+        tax_template = frappe.db.get_value(
+            "Sales Taxes and Charges Template",
+            {"is_default": 1, "company": company_name},
+            "name"
+        )
+
+        # ✅ Fallback if no default found
+        if not tax_template:
+            fallback_template = "Output GST In-state"
+            if frappe.db.exists("Sales Taxes and Charges Template", fallback_template):
+                tax_template = fallback_template
+
+        # ✅ Create Sales Order document
         so = frappe.get_doc({
             "doctype": "Sales Order",
             "customer": customer,
-            "company": company_name,  # ✅ Auto-picked from company list
+            "company": company_name,
             "currency": data.get("currency") or default_currency,
             "custom_sales_person": data.get("sales_person"),
             "delivery_date": data.get("delivery_date"),
+            "taxes_and_charges": tax_template,
             "items": []
         })
 
-        # Add items
+        # ✅ Add items
         for item in items:
             so.append("items", {
                 "item_code": item.get("item_code"),
@@ -577,15 +588,11 @@ def create_sales_order():
                 "price_list_rate": flt(item.get("rate", 0.0)),
             })
 
-        # Always set Output GST In-state as taxes_and_charges
-        # tax_template_name = "Output GST In-state"
-        # if not frappe.db.exists("Sales Taxes and Charges Template", tax_template_name):
-        #     return {"status": "error", "message": f"Tax Template '{tax_template_name}' does not exist.", "code": 404}
+        # ✅ Apply taxes from template
+        if tax_template:
+            so.set_taxes()
 
-        # so.taxes_and_charges = tax_template_name
-        # so.set_taxes()
-
-        # Fill in missing values & calculate totals
+        # ✅ Fill in missing values & calculate totals
         so.run_method("set_missing_values")
         so.run_method("calculate_taxes_and_totals")
 
@@ -596,9 +603,9 @@ def create_sales_order():
             "sales_order_id": so.name,
             "delivery_date": data.get("delivery_date"),
             "customer": customer,
-            "company": so.company,  # ✅ Returned company
+            "company": so.company,
             "items": items,
-            # "taxes_and_charges": so.taxes_and_charges,
+            "taxes_and_charges": so.taxes_and_charges,
             "total": so.total,
             "grand_total": so.grand_total,
             "status": so.status,
@@ -614,7 +621,6 @@ def create_sales_order():
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
         return {"status": "error", "message": str(e), "code": 417}
-
 
 
 
