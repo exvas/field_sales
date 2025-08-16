@@ -532,7 +532,7 @@ def get_customers():
 #         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
 #         return {"status": "error", "message": str(e), "code": 417}
 @frappe.whitelist(methods=["POST"])
-def c_salesorder():
+def create_sales_order():
     try:
         from frappe.utils import flt
 
