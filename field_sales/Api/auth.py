@@ -1755,51 +1755,140 @@ def get_item_tax():
             "gst_rate": rates[0].tax_rate if rates else 0
         })
     return result
+
+# @frappe.whitelist()
+# def create_sales_return_with_invoice_id():
+#     data = frappe.request.get_json()
+
+#     sales_return = frappe.new_doc("Sales Invoice")
+#     sales_return.is_return = 1
+#     sales_return.posting_date = data.get("return_date")
+#     sales_return.custom_sales_person = data.get("sales_person")
+
+#     if data.get("return_against"):  # CASE 1: With Sales Invoice
+#         original_invoice = frappe.get_doc("Sales Invoice", data["return_against"])
+#         sales_return.return_against = data["return_against"]
+#         sales_return.customer = original_invoice.customer
+#         sales_return.company = original_invoice.company
+
+#         for item in data["items"]:
+#             # Get original qty from invoice
+#             original_qty = frappe.db.get_value(
+#                 "Sales Invoice Item",
+#                 {"parent": data["return_against"], "item_code": item["item_code"]},
+#                 "qty"
+#             ) or 0
+
+#             # Get already returned qty
+#             already_returned = frappe.db.sql("""
+#                 SELECT COALESCE(SUM(ABS(qty)), 0)
+#                 FROM `tabSales Invoice Item`
+#                 WHERE item_code=%s
+#                 AND parent IN (
+#                     SELECT name FROM `tabSales Invoice`
+#                     WHERE return_against=%s AND docstatus=1
+#                 )
+#             """, (item["item_code"], data["return_against"]))[0][0]
+
+#             remaining_qty = original_qty - already_returned
+#             if item["qty"] > remaining_qty:
+#                 frappe.throw(
+#                     f"Cannot return {item['qty']} of {item['item_code']}. "
+#                     f"Only {remaining_qty} remaining to return."
+#                 )
+
+#             sales_return.append("items", {
+#                 "item_code": item["item_code"],
+#                 "qty": -abs(item["qty"]),
+#                 "rate": item.get("rate")
+#             })
+
+#     else:  # CASE 2: Without Sales Invoice
+#         sales_return.customer = data.get("customer")
+#         sales_return.company = data.get("company")
+
+#         for item in data["items"]:
+#             sales_return.append("items", {
+#                 "item_code": item["item_code"],
+#                 "qty": -abs(item["qty"]),
+#                 "rate": item.get("rate")
+#             })
+
+#     sales_return.flags.ignore_permissions = True
+#     sales_return.save()
+#     return {"status": "success", "sales_return": sales_return.name}
+
+
 @frappe.whitelist()
 def create_sales_return_with_invoice_id():
-    data = frappe.request.get_json()  # read POST body JSON
+    data = frappe.request.get_json()
 
-    original_invoice = frappe.get_doc("Sales Invoice", data["return_against"])
+    # helper function to decide company
+    def get_company_name(requested_company=None):
+        if requested_company:
+            return requested_company
 
+        companies = frappe.get_all("Company", fields=["name"])
+        if len(companies) == 1:
+            return companies[0].name
+        else:
+            return frappe.db.get_single_value("Global Defaults", "default_company")
+
+    # Create sales return document
     sales_return = frappe.new_doc("Sales Invoice")
     sales_return.is_return = 1
-    sales_return.return_against = data["return_against"]
     sales_return.posting_date = data.get("return_date")
-    sales_return.customer = original_invoice.customer
-    sales_return.company = original_invoice.company
     sales_return.custom_sales_person = data.get("sales_person")
 
-    for item in data["items"]:
-        original_qty = frappe.db.get_value(
-            "Sales Invoice Item",
-            {"parent": data["return_against"], "item_code": item["item_code"]},
-            "qty"
-        ) or 0
+    if data.get("return_against"):  # CASE 1: With Sales Invoice
+        original_invoice = frappe.get_doc("Sales Invoice", data["return_against"])
+        sales_return.return_against = data["return_against"]
+        sales_return.customer = original_invoice.customer
+        sales_return.company = original_invoice.company or get_company_name()
 
-        already_returned = frappe.db.sql("""
-            SELECT COALESCE(SUM(ABS(qty)), 0)
-            FROM ⁠ tabSales Invoice Item ⁠
-            WHERE item_code=%s
-            AND parent IN (
-                SELECT name FROM ⁠ tabSales Invoice ⁠
-                WHERE return_against=%s AND docstatus=1
-            )
-        """, (item["item_code"], data["return_against"]))[0][0]
+        for item in data["items"]:
+            # Get original qty from invoice
+            original_qty = frappe.db.get_value(
+                "Sales Invoice Item",
+                {"parent": data["return_against"], "item_code": item["item_code"]},
+                "qty"
+            ) or 0
 
-        remaining_qty = original_qty - already_returned
+            # Get already returned qty
+            already_returned = frappe.db.sql("""
+                SELECT COALESCE(SUM(ABS(qty)), 0)
+                FROM `tabSales Invoice Item`
+                WHERE item_code=%s
+                AND parent IN (
+                    SELECT name FROM `tabSales Invoice`
+                    WHERE return_against=%s AND docstatus=1
+                )
+            """, (item["item_code"], data["return_against"]))[0][0]
 
-        if item["qty"] > remaining_qty:
-            frappe.throw(
-                f"Cannot return {item['qty']} of {item['item_code']}. "
-                f"Only {remaining_qty} remaining to return."
-            )
+            remaining_qty = original_qty - already_returned
+            if item["qty"] > remaining_qty:
+                frappe.throw(
+                    f"Cannot return {item['qty']} of {item['item_code']}. "
+                    f"Only {remaining_qty} remaining to return."
+                )
 
-        sales_return.append("items", {
-            "item_code": item["item_code"],
-            "qty": -abs(item["qty"]),  # always store as negative
-            "rate": item["rate"]
-        })
+            sales_return.append("items", {
+                "item_code": item["item_code"],
+                "qty": -abs(item["qty"]),
+                "rate": item.get("rate")
+            })
+
+    else:  # CASE 2: Without Sales Invoice
+        sales_return.customer = data.get("customer")
+        sales_return.company = get_company_name(data.get("company"))
+
+        for item in data["items"]:
+            sales_return.append("items", {
+                "item_code": item["item_code"],
+                "qty": -abs(item["qty"]),
+                "rate": item.get("rate")
+            })
 
     sales_return.flags.ignore_permissions = True
-    sales_return.save()  # keep as draft
+    sales_return.save()
     return {"status": "success", "sales_return": sales_return.name}
