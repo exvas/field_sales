@@ -2221,6 +2221,9 @@ def create_sales_return():
         return {"status": "error", "message": errors}
 
     # Save as Draft
+    sales_return.run_method("set_other_charges")
+    sales_return.run_method("set_missing_values")
+    sales_return.run_method("calculate_taxes_and_totals")
     sales_return.save(ignore_permissions=True)
 
     # Clear unwanted messages
