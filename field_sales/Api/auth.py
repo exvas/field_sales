@@ -453,6 +453,7 @@ def get_sales_orders_with_details(sales_person_id=None):
             "total": doc.total,
             "total_taxes_and_charges": doc.total_taxes_and_charges,
             "grand_total": doc.grand_total,
+            "rounded total":doc.rounded_total,
             "items": [
                 {
                     "item_code": item.item_code,
@@ -533,7 +534,6 @@ def get_employee_location_entries(employee=None):
 
 #     return {"invoices": result}
 
-import frappe
 
 @frappe.whitelist(allow_guest=False)
 def get_sales_invoice_list():
@@ -796,7 +796,8 @@ def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None)
     # Build filters
     filters = {
         "docstatus": 1,  # Submitted invoices only
-        "custom_sales_person": sales_person
+        "custom_sales_person": sales_person,
+        "is_return": 0   
     }
 
     if customer:
@@ -2230,7 +2231,7 @@ def create_sales_return():
     frappe.local.response["_server_messages"] = None
     frappe.clear_messages()
 
-    return {
+    return {                            
         "status": "success",
         "sales_return": sales_return.name,
         "tax_template": sales_return.taxes_and_charges
