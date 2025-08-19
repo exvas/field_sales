@@ -558,8 +558,7 @@ def get_sales_invoice_list():
             "name", "customer", "posting_date", "due_date",
             "grand_total", "outstanding_amount", "status"
         ],
-        order_by="posting_date desc"
-    )
+        order_by="creation desc"     )
 
     result = []
 
@@ -580,8 +579,8 @@ def get_sales_invoice_list():
                 "reference_doctype": "Sales Invoice",
                 "reference_name": inv.name
             },
-            fields=["parent", "allocated_amount"]
-        )
+            fields=["parent", "allocated_amount"],
+              )
 
         # Fetch full Payment Entry details
         payments = []
