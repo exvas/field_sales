@@ -550,7 +550,9 @@ def get_sales_invoice_list():
         "Sales Invoice",
         filters={
             "docstatus": 1,
-            "custom_sales_person": sales_person  # ✅ Filter by custom field
+            "custom_sales_person": sales_person,
+            "is_return": 0 
+             # ✅ Filter by custom field
         },
         fields=[
             "name", "customer", "posting_date", "due_date",
