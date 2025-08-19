@@ -1458,19 +1458,33 @@ def log_customer_visit():
         "name": doc.name
     }
 
+
 @frappe.whitelist(allow_guest=False)
-def get_all_sales_invoice_ids():
+def get_all_sales_invoice_ids(sales_person=None):
+    if not sales_person:
+        frappe.throw("Sales Person ID is required")
+
     try:
+        filters = {
+            "docstatus": 1,
+            "is_return": 0,
+            "custom_sales_person": sales_person
+        }
+
         invoices = frappe.get_all(
             "Sales Invoice",
-            filters={"docstatus": 1},  # Only submitted invoices
-            pluck="name"  # Returns only the "name" field (invoice ID)
+            filters=filters,
+            fields=["name", "customer", "outstanding_amount"],  # Added outstanding too for test
+            order_by="posting_date desc"
         )
+
+        # Debug log
+        frappe.logger().info({"api_result": invoices})
 
         return {
             "status": "success",
             "code": 200,
-            "message": "Successfully fetched all sales invoice IDs",
+            "message": "Successfully fetched all sales invoices",
             "data": invoices
         }
 
@@ -1482,6 +1496,8 @@ def get_all_sales_invoice_ids():
             "message": f"An unexpected error occurred: {str(e)}",
             "data": None
         }
+
+
 
 @frappe.whitelist()
 def sales_invoice_detail_by_ids():
