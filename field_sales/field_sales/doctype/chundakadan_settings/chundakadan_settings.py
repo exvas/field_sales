@@ -5,5 +5,5 @@
 from frappe.model.document import Document
 
 
-class ChundakkadanSettings(Document):
+class ChundakadanSettings(Document):
 	pass
