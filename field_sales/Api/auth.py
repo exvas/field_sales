@@ -399,7 +399,7 @@ def create_sales_order():
 
         # ✅ Read setting from Chundakkadan Settings
         enable_stock_validation = frappe.db.get_single_value(
-            "Chundakkadan Settings", "enable_stock_validation"
+            "Chundakadan Settings", "enable_stock_validation"
         )
 
         # ✅ Create Sales Order document
