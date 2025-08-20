@@ -18,70 +18,7 @@ def response(message, data, success, status_code):
     frappe.local.response["http_status_code"] = status_code
     return
 
-# @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
-# def user_login(usr, pwd, device_id=None):
-#     if not usr or not pwd:
-#         frappe.local.response["message"] = {
-#             "success_key": 0,
-#             "message": "Both User and Password are required!",
-#         }
-#         frappe.local.response.http_status_code = 400
-#         return
 
-#     filter_field = "email" if "@" in usr else ("mobile_no" if usr.isdigit() else "username")
-
-#     user = frappe.db.get_value("User", {filter_field: usr}, ["name", "username", "email", "mobile_no", "api_key"], as_dict=True)
-
-#     if not user:
-#         frappe.local.response["message"] = {
-#             "success_key": 0,
-#             "message": f"{filter_field.capitalize()} {usr} Does Not Exist!",
-#         }
-#         frappe.local.response.http_status_code = 404
-#         frappe.log_error(
-#             title="Login Failed", message=f"{filter_field.capitalize()} {usr} Does Not Exist!"
-#         )
-#         return
-
-#     try:
-#         login_manager = frappe.auth.LoginManager()
-#         frappe.form_dict.device = "mobile"
-#         login_manager.authenticate(user=user.name, pwd=pwd)
-#         login_manager.post_login()
-
-#         # Generate API key/secret
-#         api_key, api_secret = generate_keys(user.name)
-
-#         # Fetch user branch
-#         branch = frappe.db.get_value(
-#             "UserBranchSettings",
-#             {"user": user.name},
-#             "branch"
-#         )
-
-#         # ✅ Fetch user roles
-#         roles = frappe.get_roles(user.name)
-
-#         frappe.response["message"] = {
-#             "success_key": 1,
-#             "message": "Authentication success",
-#             "sid": frappe.session.sid,
-#             "api_key": api_key,
-#             "api_secret": api_secret,
-#             "username": user.username,
-#             "email": user.email,
-#             "mobile_no": user.mobile_no,
-#             "branch": branch or "Not Assigned",
-#             "roles": roles  # 👈 Add roles here
-#         }
-
-#     except frappe.exceptions.AuthenticationError:
-#         frappe.clear_messages()
-#         frappe.local.response["message"] = {
-#             "success_key": 0,
-#             "message": "Incorrect password!",
-#         }
-#         frappe.local.response.http_status_code = 401
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 def user_login(usr, pwd, device_id=None):
@@ -328,6 +265,101 @@ def get_customers():
     return {"message": customers}
 
 
+# @frappe.whitelist(methods=["POST"])
+# def create_sales_order():
+#     try:
+#         from frappe.utils import flt
+
+#         data = frappe.request.get_json()
+#         if not data:
+#             return {"status": "error", "message": "Invalid request data", "code": 400}
+
+#         customer = data.get("customer")
+#         items = data.get("items")
+
+#         if not customer:
+#             return {"status": "error", "message": "Customer is required", "code": 400}
+#         if not items or not isinstance(items, list):
+#             return {"status": "error", "message": "At least one item is required", "code": 400}
+
+#         # ✅ Check if customer exists
+#         if not frappe.db.exists("Customer", customer):
+#             return {"status": "error", "message": f"Customer '{customer}' does not exist.", "code": 404}
+
+#         # ✅ Fetch a company dynamically
+#         company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
+#         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
+
+#         # ✅ Fetch default Sales Taxes and Charges Template from Accounting
+#         tax_template = frappe.db.get_value(
+#             "Sales Taxes and Charges Template",
+#             {"is_default": 1, "company": company_name},
+#             "name"
+#         )
+
+#         # ✅ Fallback if no default found
+#         if not tax_template:
+#             fallback_template = "Output GST In-state"
+#             if frappe.db.exists("Sales Taxes and Charges Template", fallback_template):
+#                 tax_template = fallback_template
+
+#         # ✅ Create Sales Order document
+#         so = frappe.get_doc({
+#             "doctype": "Sales Order",
+#             "customer": customer,
+#             "company": company_name,
+#             "currency": data.get("currency") or default_currency,
+#             "custom_sales_person": data.get("sales_person"),
+#             "delivery_date": data.get("delivery_date"),
+#             "taxes_and_charges": tax_template,
+#             "items": []
+#         })
+
+#         # ✅ Add items
+#         for item in items:
+#             so.append("items", {
+#                 "item_code": item.get("item_code"),
+#                 "qty": flt(item.get("qty", 1)),
+#                 "description": item.get("description", ""),
+#                 "discount_amount": flt(item.get("discount_amount", 0.0)),
+#                 "price_list_rate": flt(item.get("rate", 0.0)),
+#             })
+
+#         # ✅ Apply taxes from template
+#         if tax_template:
+#             so.set_taxes()
+
+#         # ✅ Fill in missing values & calculate totals
+#         so.run_method("set_other_charges")
+#         so.run_method("set_missing_values")
+#         so.run_method("calculate_taxes_and_totals")
+
+#         so.insert()
+#         so.submit()
+
+#         response_data = {
+#             "sales_order_id": so.name,
+#             "delivery_date": data.get("delivery_date"),
+#             "customer": customer,
+#             "company": so.company,
+#             "items": items,
+#             "taxes_and_charges": so.taxes_and_charges,
+#             "total": so.total,
+#             "grand_total": so.grand_total,
+#             "status": so.status,
+#         }
+
+#         return {
+#             "status": "success",
+#             "message": "Sales Order created successfully",
+#             "data": response_data,
+#             "code": 201
+#         }
+
+#     except Exception as e:
+#         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
+#         return {"status": "error", "message": str(e), "code": 417}
+
 @frappe.whitelist(methods=["POST"])
 def create_sales_order():
     try:
@@ -353,18 +385,22 @@ def create_sales_order():
         company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
 
-        # ✅ Fetch default Sales Taxes and Charges Template from Accounting
+        # ✅ Fetch default Sales Taxes and Charges Template
         tax_template = frappe.db.get_value(
             "Sales Taxes and Charges Template",
             {"is_default": 1, "company": company_name},
             "name"
         )
 
-        # ✅ Fallback if no default found
         if not tax_template:
             fallback_template = "Output GST In-state"
             if frappe.db.exists("Sales Taxes and Charges Template", fallback_template):
                 tax_template = fallback_template
+
+        # ✅ Read setting from Chundakkadan Settings
+        enable_stock_validation = frappe.db.get_single_value(
+            "Chundakkadan Settings", "enable_stock_validation"
+        )
 
         # ✅ Create Sales Order document
         so = frappe.get_doc({
@@ -378,11 +414,34 @@ def create_sales_order():
             "items": []
         })
 
-        # ✅ Add items
+        # ✅ Validate stock availability only if setting is enabled
         for item in items:
+            item_code = item.get("item_code")
+            req_qty = flt(item.get("qty", 1))
+            warehouse = item.get("warehouse") or frappe.db.get_value(
+                "Item Default", {"parent": item_code}, "default_warehouse"
+            )
+
+            if not warehouse:
+                return {"status": "error", "message": f"Warehouse not specified for item {item_code}", "code": 400}
+
+            if enable_stock_validation:
+                available_qty = flt(
+                    frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty") or 0
+                )
+
+                if req_qty > available_qty:
+                    return {
+                        "status": "error",
+                        "message": f"Only {available_qty} qty available for Item {item_code} in {warehouse}, but {req_qty} requested.",
+                        "code": 400
+                    }
+
+            # ✅ Append item (always)
             so.append("items", {
-                "item_code": item.get("item_code"),
-                "qty": flt(item.get("qty", 1)),
+                "item_code": item_code,
+                "warehouse": warehouse,
+                "qty": req_qty,
                 "description": item.get("description", ""),
                 "discount_amount": flt(item.get("discount_amount", 0.0)),
                 "price_list_rate": flt(item.get("rate", 0.0)),
@@ -392,7 +451,6 @@ def create_sales_order():
         if tax_template:
             so.set_taxes()
 
-        # ✅ Fill in missing values & calculate totals
         so.run_method("set_other_charges")
         so.run_method("set_missing_values")
         so.run_method("calculate_taxes_and_totals")
@@ -422,7 +480,6 @@ def create_sales_order():
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
         return {"status": "error", "message": str(e), "code": 417}
-
 
 
 @frappe.whitelist()
@@ -504,35 +561,7 @@ def get_employee_location_entries(employee=None):
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "get_employee_location_entries error")
         frappe.throw(_("Failed to fetch employee location entries."))
-# frappe_app/api/sales_invoice.py
-# import frappe
-# from frappe import _
 
-# @frappe.whitelist(allow_guest=False)
-# def get_sales_invoice_lists():
-#     invoices = frappe.get_all("Sales Invoice", filters={"docstatus": 1}, fields=[
-#         "name", "customer", "posting_date", "due_date", "grand_total", "outstanding_amount", "status"
-#     ], order_by="posting_date desc")
-
-#     result = []
-
-#     for inv in invoices:
-#         items = frappe.get_all("Sales Invoice Item", filters={"parent": inv.name}, fields=[
-#             "item_code", "item_name", "qty", "rate", "amount", "description"
-#         ])
-
-#         result.append({
-#             "invoice_id": inv.name,
-#             "customer": inv.customer,
-#             "posting_date": inv.posting_date,
-#             "due_date": inv.due_date,
-#             "grand_total": inv.grand_total,
-#             "outstanding_amount": inv.outstanding_amount,
-#             "status": inv.status,
-#             "items": items
-#         })
-
-#     return {"invoices": result}
 
 
 @frappe.whitelist(allow_guest=False)
@@ -747,47 +776,6 @@ def pay_sales_invoice():
         "payment_entry": payment_entry.name
     }
 
-# @frappe.whitelist(allow_guest=True)
-# def get_customer_sales_invoices(customer):
-#     try:
-#         invoices = frappe.get_all(
-#             "Sales Invoice",
-#             filters={"customer": customer, "docstatus": 1},
-#             fields=["name", "posting_date", "due_date", "grand_total", "outstanding_amount"],
-#             order_by="posting_date desc"
-#         )
-
-#         invoice_data = []
-
-#         for inv in invoices:
-#             items = frappe.get_all(
-#                 "Sales Invoice Item",
-#                 filters={"parent": inv.name},
-#                 fields=["item_code", "item_name", "qty", "rate", "amount"]
-#             )
-
-#             invoice_data.append({
-#                 "invoice_name": inv.name,
-#                 "posting_date": inv.posting_date,
-#                 "due_date": inv.due_date,
-#                 "grand_total": inv.grand_total,
-#                 "outstanding_amount": inv.outstanding_amount,
-#                 "items": items
-#             })
-
-#         return {
-#             "status": "success",
-#             "customer": customer,
-#             "invoice_count": len(invoice_data),
-#             "invoices": invoice_data
-#         }
-
-#     except Exception as e:
-#         frappe.log_error(frappe.get_traceback(), "get_customer_sales_invoices")
-#         return {
-#             "status": "error",
-#             "message": str(e)
-#         }
 
 @frappe.whitelist()
 def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None):
@@ -862,77 +850,7 @@ def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None)
         }
 
 
-# @frappe.whitelist(allow_guest=True)
-# def get_customer_sales_invoices(customer):
-#     try:
-#         invoices = frappe.get_all(
-#             "Sales Invoice",
-#             filters={"customer": customer, "docstatus": 1},
-#             fields=["name", "posting_date", "due_date", "grand_total", "outstanding_amount"],
-#             order_by="posting_date desc"
-#         )
 
-#         invoice_data = []
-#         total_outstanding = 0
-
-#         for inv in invoices:
-#             # Fetch items in the invoice
-#             items = frappe.get_all(
-#                 "Sales Invoice Item",
-#                 filters={"parent": inv.name},
-#                 fields=["item_code", "item_name", "qty", "rate", "amount"]
-#             )
-
-#             # Fetch Payment Entries linked to this Sales Invoice
-#             payment_refs = frappe.get_all(
-#                 "Payment Entry Reference",
-#                 filters={
-#                     "reference_doctype": "Sales Invoice",
-#                     "reference_name": inv.name
-#                 },
-#                 fields=["parent", "allocated_amount"]
-#             )
-
-#             # Now get the details of those payment entries
-#             payments = []
-#             for ref in payment_refs:
-#                 payment = frappe.get_doc("Payment Entry", ref.parent)
-
-#                 payments.append({
-#                     "payment_entry": payment.name,
-#                     "posting_date": payment.posting_date,
-#                     "mode_of_payment": payment.mode_of_payment,
-#                     "paid_amount": payment.paid_amount,
-#                     "allocated_amount": ref.allocated_amount,
-#                     "status": payment.status
-#                 })
-
-#             total_outstanding += inv.outstanding_amount or 0
-
-#             invoice_data.append({
-#                 "invoice_name": inv.name,
-#                 "posting_date": inv.posting_date,
-#                 "due_date": inv.due_date,
-#                 "grand_total": inv.grand_total,
-#                 "outstanding_amount": inv.outstanding_amount,
-#                 "items": items,
-#                 "payments": payments  # <- included here
-#             })
-
-#         return {
-#             "status": "success",
-#             "customer": customer,
-#             "invoice_count": len(invoice_data),
-#             "total_outstanding_amount": total_outstanding,
-#             "invoices": invoice_data
-#         }
-
-#     except Exception as e:
-#         frappe.log_error(frappe.get_traceback(), "get_customer_sales_invoices")
-#         return {
-#             "status": "error",
-#             "message": str(e)
-#         }
 
 @frappe.whitelist()
 def get_location_data(employee=None, date=None):
@@ -1573,25 +1491,7 @@ def get_location_update_interval():
 
         }
 
-# @frappe.whitelist()
-# def get_item_tax():
-#     templates = frappe.get_all(
-#         "Item Tax Template",
-#         fields=["name", "title"]
-#     )
-#     result = []
-#     for t in templates:
-#         rates = frappe.get_all(
-#             "Item Tax Template Detail",
-#             filters={"parent": t.name},
-#             fields=["tax_rate"]
-#         )
-#         result.append({
-#             "name": t.name,
-#             "title": t.title,
-#             "gst_rate": rates[0].tax_rate if rates else 0
-#         })
-#     return result
+
 @frappe.whitelist()
 def get_item_tax():
     templates = frappe.get_all(
@@ -1610,526 +1510,6 @@ def get_item_tax():
     return result
 
 
-# @frappe.whitelist()
-# def create_sales_return_with_invoice_id():
-#     data = frappe.request.get_json()
-
-#     sales_return = frappe.new_doc("Sales Invoice")
-#     sales_return.is_return = 1
-#     sales_return.posting_date = data.get("return_date")
-#     sales_return.custom_sales_person = data.get("sales_person")
-
-#     if data.get("return_against"):  # CASE 1: With Sales Invoice
-#         original_invoice = frappe.get_doc("Sales Invoice", data["return_against"])
-#         sales_return.return_against = data["return_against"]
-#         sales_return.customer = original_invoice.customer
-#         sales_return.company = original_invoice.company
-
-#         for item in data["items"]:
-#             # Get original qty from invoice
-#             original_qty = frappe.db.get_value(
-#                 "Sales Invoice Item",
-#                 {"parent": data["return_against"], "item_code": item["item_code"]},
-#                 "qty"
-#             ) or 0
-
-#             # Get already returned qty
-#             already_returned = frappe.db.sql("""
-#                 SELECT COALESCE(SUM(ABS(qty)), 0)
-#                 FROM `tabSales Invoice Item`
-#                 WHERE item_code=%s
-#                 AND parent IN (
-#                     SELECT name FROM `tabSales Invoice`
-#                     WHERE return_against=%s AND docstatus=1
-#                 )
-#             """, (item["item_code"], data["return_against"]))[0][0]
-
-#             remaining_qty = original_qty - already_returned
-#             if item["qty"] > remaining_qty:
-#                 frappe.throw(
-#                     f"Cannot return {item['qty']} of {item['item_code']}. "
-#                     f"Only {remaining_qty} remaining to return."
-#                 )
-
-#             sales_return.append("items", {
-#                 "item_code": item["item_code"],
-#                 "qty": -abs(item["qty"]),
-#                 "rate": item.get("rate")
-#             })
-
-#     else:  # CASE 2: Without Sales Invoice
-#         sales_return.customer = data.get("customer")
-#         sales_return.company = data.get("company")
-
-#         for item in data["items"]:
-#             sales_return.append("items", {
-#                 "item_code": item["item_code"],
-#                 "qty": -abs(item["qty"]),
-#                 "rate": item.get("rate")
-#             })
-
-#     sales_return.flags.ignore_permissions = True
-#     sales_return.save()
-#     return {"status": "success", "sales_return": sales_return.name}
-
-
-
-
-# @frappe.whitelist()
-# def create_sales_return_with_invoice_id():
-#     data = frappe.request.get_json()
-
-#     # helper function to decide company
-#     def get_company_name(requested_company=None):
-#         if requested_company:
-#             return requested_company
-
-#         companies = frappe.get_all("Company", fields=["name"])
-#         if len(companies) == 1:
-#             return companies[0].name
-#         else:
-#             return frappe.db.get_single_value("Global Defaults", "default_company")
-
-#     # Create sales return document
-#     sales_return = frappe.new_doc("Sales Invoice")
-#     sales_return.is_return = 1
-#     sales_return.posting_date = data.get("return_date")
-#     sales_return.custom_sales_person = data.get("sales_person")
-#     sales_return.custom_return_reason = data.get("return_reason")  # ✅ added reason
-
-#     # decide company
-#     if data.get("return_against"):  
-#         original_invoice = frappe.get_doc("Sales Invoice", data["return_against"])
-#         sales_return.return_against = data["return_against"]
-#         sales_return.customer = original_invoice.customer
-#         company_name = original_invoice.company or get_company_name()
-#         sales_return.company = company_name
-#     else:
-#         company_name = get_company_name(data.get("company"))
-#         sales_return.customer = data.get("customer")
-#         sales_return.company = company_name
-
-#     # ✅ Fetch default Sales Taxes and Charges Template from Accounting
-#     tax_template = frappe.db.get_value(
-#         "Sales Taxes and Charges Template",
-#         {"is_default": 1, "company": company_name},
-#         "name"
-#     )
-
-#     # ✅ Fallback if no default found
-#     if not tax_template:
-#         fallback_template = "Output GST In-state"
-#         if frappe.db.exists("Sales Taxes and Charges Template", fallback_template):
-#             tax_template = fallback_template
-
-#     # assign tax template if found
-#     if tax_template:
-#         sales_return.taxes_and_charges = tax_template
-
-#     # add items
-#     if data.get("return_against"):
-#         for item in data["items"]:
-#             # Get original qty from invoice
-#             original_qty = frappe.db.get_value(
-#                 "Sales Invoice Item",
-#                 {"parent": data["return_against"], "item_code": item["item_code"]},
-#                 "qty"
-#             ) or 0
-
-#             # Get already returned qty
-#             already_returned = frappe.db.sql("""
-#                 SELECT COALESCE(SUM(ABS(qty)), 0)
-#                 FROM `tabSales Invoice Item`
-#                 WHERE item_code=%s
-#                 AND parent IN (
-#                     SELECT name FROM `tabSales Invoice`
-#                     WHERE return_against=%s AND docstatus=1
-#                 )
-#             """, (item["item_code"], data["return_against"]))[0][0]
-
-#             remaining_qty = original_qty - already_returned
-#             if item["qty"] > remaining_qty:
-#                 frappe.throw(
-#                     f"Cannot return {item['qty']} of {item['item_code']}. "
-#                     f"Only {remaining_qty} remaining to return."
-#                 )
-
-#             sales_return.append("items", {
-#                 "item_code": item["item_code"],
-#                 "qty": -abs(item["qty"]),
-#                 "rate": item.get("rate")
-#             })
-#     else:
-#         for item in data["items"]:
-#             sales_return.append("items", {
-#                 "item_code": item["item_code"],
-#                 "qty": -abs(item["qty"]),
-#                 "rate": item.get("rate")
-#             })
-
-#     sales_return.flags.ignore_permissions = True
-#     sales_return.save()
-
-#     return {"status": "success", "sales_return": sales_return.name}
-
-# @frappe.whitelist()
-# def create_sales_return_with_invoice_id():
-#     """Create a Sales Return with validation:
-#        - Item must exist on original invoice
-#        - Requested return qty <= (sold qty - already submitted returns)
-#     """
-#     import frappe
-#     from collections import defaultdict
-#     from frappe.utils import flt
-
-#     try:
-#         data = frappe.request.get_json()
-
-#         # ---- Helpers ----
-#         def get_default_tax_template(company):
-#             return frappe.db.get_value(
-#                 "Sales Taxes and Charges Template",
-#                 {"company": company, "is_default": 1},
-#                 "name"
-#             )
-
-#         def sum_qty(rows):
-#             acc = defaultdict(float)
-#             for r in rows or []:
-#                 acc[r.get("item_code")] += abs(flt(r.get("qty")))
-#             return acc
-
-#         # ---- Basic validations ----
-#         return_against = data.get("return_against")
-#         if not return_against:
-#             return {"status": "error", "message": "Return Against Invoice is required."}
-
-#         # Load original invoice
-#         orig_inv = frappe.get_doc("Sales Invoice", return_against)
-#         if orig_inv.docstatus != 1:
-#             return {
-#                 "status": "error",
-#                 "message": f"Original Sales Invoice {return_against} must be Submitted to create a return."
-#             }
-
-#         company = data.get("company") or orig_inv.company
-
-#         # ---- Original sold qty map ----
-#         original_item_map = defaultdict(float)
-#         for it in orig_inv.items:
-#             original_item_map[it.item_code] += flt(it.qty)
-
-#         # ---- Get cumulative submitted returns ----
-#         submitted_returns = frappe.get_all(
-#             "Sales Invoice",
-#             filters={
-#                 "is_return": 1,
-#                 "return_against": return_against,
-#                 "docstatus": 1  # ✅ only submitted
-#             },
-#             pluck="name"
-#         )
-
-#         returned_item_map = defaultdict(float)
-#         if submitted_returns:
-#             returned_rows = frappe.get_all(
-#                 "Sales Invoice Item",
-#                 filters={"parent": ["in", submitted_returns]},
-#                 fields=["item_code", "qty"]
-#             )
-#             for r in returned_rows:
-#                 returned_item_map[r["item_code"]] += abs(flt(r["qty"]))
-
-#         # ---- Requested qtys ----
-#         requested_map = sum_qty(data.get("items"))
-
-#         # ---- Validation ----
-#         errors = []
-#         for item_code, req_qty in requested_map.items():
-#             sold_qty = original_item_map.get(item_code, 0.0)
-#             if sold_qty <= 0:
-#                 errors.append(f"Item {item_code} not found in original invoice {return_against}.")
-#                 continue
-
-#             already_ret = returned_item_map.get(item_code, 0.0)
-#             remaining = sold_qty - already_ret
-#             if req_qty > remaining + 1e-9:
-#                 errors.append(
-#                     f"Item {item_code}: requested return {req_qty} exceeds remaining {remaining} "
-#                     f"(sold {sold_qty} - already returned {already_ret})."
-#                 )
-
-#         if errors:
-#             return {"status": "error", "message": errors}
-
-#         # ---- Create Sales Return ----
-#         si = frappe.new_doc("Sales Invoice")
-#         si.is_return = 1
-#         si.return_against = return_against
-#         si.posting_date = data.get("return_date")
-#         si.customer = data.get("customer") or orig_inv.customer
-#         si.custom_sales_person = data.get("sales_person")
-#         si.company = company
-#         si.custom_return_reason = data.get("return_reason")
-
-#         tax_template = get_default_tax_template(company)
-#         if tax_template:
-#             si.taxes_and_charges = tax_template
-#             si.set_taxes()
-
-#         for row in data.get("items", []):
-#             si.append("items", {
-#                 "item_code": row.get("item_code"),
-#                 "qty": -abs(flt(row.get("qty"))),  # negative qty
-#                 "rate": flt(row.get("rate"))
-#             })
-
-#         si.insert()   # stays as Draft
-#         # si.submit()  # enable if you want auto-submit
-
-#         # ✅ Clear unwanted messages completely
-#         frappe.local.response["_server_messages"] = None
-#         frappe.clear_messages()
-
-#         return {
-#             "status": "success",
-#             "sales_return": si.name,
-#             "tax_template": tax_template,
-#         }
-
-#     except Exception as e:
-#         frappe.clear_messages()
-#         frappe.local.response["_server_messages"] = None
-#         frappe.log_error(frappe.get_traceback(), "Sales Return API Error")
-#         return {"status": "error", "message": str(e)}
-
-# @frappe.whitelist()
-# def create_sales_return_with_invoice_id():
-#     """Create a Sales Return with validation:
-#        - Item must exist on original invoice
-#        - Requested return qty <= (sold qty - already submitted returns)
-#        - Tax template copied from original invoice OR company default
-#     """
-#     import frappe
-#     from collections import defaultdict
-#     from frappe.utils import flt
-
-#     try:
-#         data = frappe.request.get_json()
-
-#         # ---- Helpers ----
-#         def get_default_tax_template(company):
-#             return frappe.db.get_value(
-#                 "Sales Taxes and Charges Template",
-#                 {"company": company, "is_default": 1},
-#                 "name"
-#             )
-
-#         def sum_qty(rows):
-#             acc = defaultdict(float)
-#             for r in rows or []:
-#                 acc[r.get("item_code")] += abs(flt(r.get("qty")))
-#             return acc
-
-#         # ---- Basic validations ----
-#         return_against = data.get("return_against")
-#         if not return_against:
-#             return {"status": "error", "message": "Return Against Invoice is required."}
-
-#         # Load original invoice
-#         orig_inv = frappe.get_doc("Sales Invoice", return_against)
-#         if orig_inv.docstatus != 1:
-#             return {
-#                 "status": "error",
-#                 "message": f"Original Sales Invoice {return_against} must be Submitted to create a return."
-#             }
-
-#         company = data.get("company") or orig_inv.company
-
-#         # ---- Original sold qty map ----
-#         original_item_map = defaultdict(float)
-#         for it in orig_inv.items:
-#             original_item_map[it.item_code] += flt(it.qty)
-
-#         # ---- Get cumulative submitted returns ----
-#         submitted_returns = frappe.get_all(
-#             "Sales Invoice",
-#             filters={
-#                 "is_return": 1,
-#                 "return_against": return_against,
-#                 "docstatus": 1  # ✅ only submitted
-#             },
-#             pluck="name"
-#         )
-
-#         returned_item_map = defaultdict(float)
-#         if submitted_returns:
-#             returned_rows = frappe.get_all(
-#                 "Sales Invoice Item",
-#                 filters={"parent": ["in", submitted_returns]},
-#                 fields=["item_code", "qty"]
-#             )
-#             for r in returned_rows:
-#                 returned_item_map[r["item_code"]] += abs(flt(r["qty"]))
-
-#         # ---- Requested qtys ----
-#         requested_map = sum_qty(data.get("items"))
-
-#         # ---- Validation ----
-#         errors = []
-#         for item_code, req_qty in requested_map.items():
-#             sold_qty = original_item_map.get(item_code, 0.0)
-#             if sold_qty <= 0:
-#                 errors.append(f"Item {item_code} not found in original invoice {return_against}.")
-#                 continue
-
-#             already_ret = returned_item_map.get(item_code, 0.0)
-#             remaining = sold_qty - already_ret
-#             if req_qty > remaining + 1e-9:
-#                 errors.append(
-#                     f"Item {item_code}: requested return {req_qty} exceeds remaining {remaining} "
-#                     f"(sold {sold_qty} - already returned {already_ret})."
-#                 )
-
-#         if errors:
-#             return {"status": "error", "message": errors}
-
-#         # ---- Create Sales Return ----
-#         si = frappe.new_doc("Sales Invoice")
-#         si.is_return = 1
-#         si.return_against = return_against
-#         si.posting_date = data.get("return_date")
-#         si.customer = data.get("customer") or orig_inv.customer
-#         si.custom_sales_person = data.get("sales_person")
-#         si.company = company
-#         si.custom_return_reason = data.get("return_reason")
-
-#         # ---- Apply Tax Template ----
-#         tax_template = None
-#         if orig_inv.taxes_and_charges:
-#             # ✅ Copy from original invoice
-#             si.taxes_and_charges = orig_inv.taxes_and_charges
-#             for t in orig_inv.taxes:
-#                 si.append("taxes", {
-#                     "charge_type": t.charge_type,
-#                     "account_head": t.account_head,
-#                     "rate": t.rate,
-#                     "description": t.description
-#                 })
-#             tax_template = orig_inv.taxes_and_charges
-#         else:
-#             # ✅ Fallback → company default template
-#             tax_template = get_default_tax_template(company)
-#             if tax_template:
-#                 si.taxes_and_charges = tax_template
-#                 taxes = frappe.get_all(
-#                     "Sales Taxes and Charges",
-#                     filters={"parent": tax_template},
-#                     fields=["charge_type", "account_head", "rate", "description"]
-#                 )
-#                 for t in taxes:
-#                     si.append("taxes", t)
-
-#         # ---- Items ----
-#         for row in data.get("items", []):
-#             si.append("items", {
-#                 "item_code": row.get("item_code"),
-#                 "qty": -abs(flt(row.get("qty"))),  # negative qty
-#                 "rate": flt(row.get("rate"))
-#             })
-
-#         si.insert()   # stays as Draft
-#         # si.submit()  # enable if you want auto-submit
-
-#         # ✅ Clear unwanted messages completely
-#         frappe.local.response["_server_messages"] = None
-#         frappe.clear_messages()
-
-#         return {
-#             "status": "success",
-#             "sales_return": si.name,
-#             "tax_template": tax_template,
-#         }
-
-#     except Exception as e:
-#         frappe.clear_messages()
-#         frappe.local.response["_server_messages"] = None
-#         frappe.log_error(frappe.get_traceback(), "Sales Return API Error")
-#         return {"status": "error", "message": str(e)}
-
-# @frappe.whitelist()
-# def create_sales_return():
-#     import frappe
-#     from frappe.utils import flt
-
-#     data = frappe.request.get_json()
-
-#     company = data.get("company") or frappe.db.get_single_value("Global Defaults", "default_company")
-
-#     # Helper to get default tax template for company
-#     def get_default_tax_template(company):
-#         return frappe.db.get_value(
-#             "Sales Taxes and Charges Template",
-#             {"company": company, "is_default": 1},
-#             "name"
-#         )
-
-#     sales_return = frappe.new_doc("Sales Invoice")
-#     sales_return.is_return = 1
-#     sales_return.posting_date = data.get("return_date") or frappe.utils.nowdate()
-#     sales_return.customer = data.get("customer")
-#     sales_return.company = company
-#     sales_return.custom_sales_person = data.get("sales_person")
-#     sales_return.custom_return_reason = data.get("return_reason")
-
-#     # CASE 1: Return against existing Sales Invoice
-#     if data.get("return_against"):
-#         sales_return.return_against = data.get("return_against")
-#         orig_inv = frappe.get_doc("Sales Invoice", data.get("return_against"))
-#         # Copy taxes from original invoice
-#         if orig_inv.taxes_and_charges:
-#             sales_return.taxes_and_charges = orig_inv.taxes_and_charges
-#             for t in orig_inv.taxes:
-#                 sales_return.append("taxes", {
-#                     "charge_type": t.charge_type,
-#                     "account_head": t.account_head,
-#                     "rate": t.rate,
-#                     "description": t.description
-#                 })
-#     else:
-#         # CASE 2: No invoice → apply default company tax template
-#         tax_template = get_default_tax_template(company)
-#         if tax_template:
-#             sales_return.taxes_and_charges = tax_template
-#             taxes = frappe.get_all(
-#                 "Sales Taxes and Charges",
-#                 filters={"parent": tax_template},
-#                 fields=["charge_type", "account_head", "rate", "description"]
-#             )
-#             for t in taxes:
-#                 sales_return.append("taxes", t)
-
-#     # Add items
-#     for item in data.get("items", []):
-#         sales_return.append("items", {
-#             "item_code": item.get("item_code"),
-#             "qty": -abs(flt(item.get("qty"))),  # negative qty for return
-#             "rate": flt(item.get("rate")),
-#             "amount": flt(item.get("qty")) * flt(item.get("rate"))
-#         })
-
-#     # Save as Draft (do not submit)
-#     sales_return.save(ignore_permissions=True)
-
-#     # Clear unwanted server messages
-#     frappe.local.response["_server_messages"] = None
-#     frappe.clear_messages()
-
-#     return {
-#         "status": "success",
-#         "sales_return": sales_return.name,
-#         "tax_template": sales_return.taxes_and_charges
-#     }
 
 @frappe.whitelist()
 def create_sales_return():
