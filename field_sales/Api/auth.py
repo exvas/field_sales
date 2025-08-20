@@ -696,6 +696,89 @@ def get_sales_invoice_list():
 #         "status": "success",
 #         "payment_entry": pe.name
 #     }
+# ----------------------------------------
+
+# @frappe.whitelist(methods=["POST"])
+# def pay_sales_invoice():
+#     data = frappe.request.get_json()
+
+#     invoice_name = data.get("invoice_name")
+#     payment_amount = float(data.get("payment_amount", 0))
+#     mode_of_payment = data.get("mode_of_payment", "Cash")
+#     reference_no = data.get("reference_no", "")
+#     reference_date = data.get("reference_date", frappe.utils.nowdate())
+#     posting_date = data.get("posting_date", frappe.utils.nowdate())
+
+#     if not invoice_name or payment_amount <= 0:
+#         return {
+#             "status": "error",
+#             "message": "Invoice name and valid payment amount are required",
+#             "code": 400
+#         }
+
+#     invoice = frappe.get_doc("Sales Invoice", invoice_name)
+
+#     if invoice.docstatus != 1:
+#         return {
+#             "status": "error",
+#             "message": "Invoice is not submitted",
+#             "code": 400
+#         }
+
+#     if invoice.outstanding_amount <= 0:
+#         return {
+#             "status": "error",
+#             "message": "Invoice already paid",
+#             "code": 400
+#         }
+
+#     # Get Paid To Account based on mode of payment and company
+#     paid_to = frappe.db.get_value("Mode of Payment Account", {
+#         "parent": mode_of_payment,
+#         "company": invoice.company
+#     }, "default_account")
+
+#     if not paid_to:
+#         return {
+#             "status": "error",
+#             "message": f"Account not found for Mode of Payment '{mode_of_payment}' in company '{invoice.company}'",
+#             "code": 400
+#         }
+
+#     payment_entry = frappe.get_doc({
+#         "doctype": "Payment Entry",
+#         "payment_type": "Receive",
+#         "party_type": "Customer",
+#         "party": invoice.customer,
+#         "company": invoice.company,
+#         "posting_date": posting_date,
+#         "mode_of_payment": mode_of_payment,
+#         "paid_to": paid_to,
+#         "paid_amount": payment_amount,
+#         "received_amount": payment_amount,
+#         "reference_no": reference_no,
+#         "reference_date": reference_date,
+#         "references": [
+#             {
+#                 "reference_doctype": "Sales Invoice",
+#                 "reference_name": invoice.name,
+#                 "total_amount": invoice.grand_total,
+#                 "outstanding_amount": invoice.outstanding_amount,
+#                 "allocated_amount": payment_amount
+#             }
+#         ]
+#     })
+
+#     payment_entry.insert(ignore_permissions=True)
+#     # payment_entry.submit()
+
+#     return {
+#         "status": "success",
+#         "payment_entry": payment_entry.name
+#     }
+
+import frappe
+from frappe.utils import nowdate
 
 @frappe.whitelist(methods=["POST"])
 def pay_sales_invoice():
@@ -705,8 +788,8 @@ def pay_sales_invoice():
     payment_amount = float(data.get("payment_amount", 0))
     mode_of_payment = data.get("mode_of_payment", "Cash")
     reference_no = data.get("reference_no", "")
-    reference_date = data.get("reference_date", frappe.utils.nowdate())
-    posting_date = data.get("posting_date", frappe.utils.nowdate())
+    reference_date = data.get("reference_date", nowdate())
+    posting_date = data.get("posting_date", nowdate())
 
     if not invoice_name or payment_amount <= 0:
         return {
@@ -744,7 +827,8 @@ def pay_sales_invoice():
             "code": 400
         }
 
-    payment_entry = frappe.get_doc({
+    # Base Payment Entry
+    payment_entry_data = {
         "doctype": "Payment Entry",
         "payment_type": "Receive",
         "party_type": "Customer",
@@ -766,8 +850,32 @@ def pay_sales_invoice():
                 "allocated_amount": payment_amount
             }
         ]
-    })
+    }
 
+    # Extra fields for Cheque / Bank Transfer
+    if mode_of_payment.lower() in ["Cheque", "Bank Draft"]:
+        if not reference_no or not reference_date:
+            return {
+                "status": "error",
+                "message": f"{mode_of_payment} requires Reference No and Reference Date",
+                "code": 400
+            }
+
+        # For cheque, map to ERPNext fields
+        if mode_of_payment.lower() == "cheque":
+            payment_entry_data.update({
+                "cheque_no": reference_no,
+                "cheque_date": reference_date
+            })
+
+        # For bank transfer, ERPNext uses reference fields
+        if mode_of_payment.lower() == "bank transfer":
+            payment_entry_data.update({
+                "reference_no": reference_no,
+                "reference_date": reference_date
+            })
+
+    payment_entry = frappe.get_doc(payment_entry_data)
     payment_entry.insert(ignore_permissions=True)
     # payment_entry.submit()
 
@@ -775,6 +883,7 @@ def pay_sales_invoice():
         "status": "success",
         "payment_entry": payment_entry.name
     }
+
 
 
 @frappe.whitelist()
