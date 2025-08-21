@@ -362,11 +362,133 @@ def get_customers():
 #         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
 #         return {"status": "error", "message": str(e), "code": 417}
 
+# @frappe.whitelist(methods=["POST"])
+# def create_sales_order():
+#     try:
+#         from frappe.utils import flt
+
+#         data = frappe.request.get_json()
+#         if not data:
+#             return {"status": "error", "message": "Invalid request data", "code": 400}
+
+#         customer = data.get("customer")
+#         items = data.get("items")
+
+#         if not customer:
+#             return {"status": "error", "message": "Customer is required", "code": 400}
+#         if not items or not isinstance(items, list):
+#             return {"status": "error", "message": "At least one item is required", "code": 400}
+
+#         # ✅ Check if customer exists
+#         if not frappe.db.exists("Customer", customer):
+#             return {"status": "error", "message": f"Customer '{customer}' does not exist.", "code": 404}
+
+#         # ✅ Fetch a company dynamically
+#         company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
+#         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
+
+#         # ✅ Fetch default Sales Taxes and Charges Template
+#         tax_template = frappe.db.get_value(
+#             "Sales Taxes and Charges Template",
+#             {"is_default": 1, "company": company_name},
+#             "name"
+#         )
+
+#         if not tax_template:
+#             fallback_template = "Output GST In-state"
+#             if frappe.db.exists("Sales Taxes and Charges Template", fallback_template):
+#                 tax_template = fallback_template
+
+#         # ✅ Read setting from Chundakkadan Settings
+#         enable_stock_validation = frappe.db.get_single_value(
+#             "Chundakadan Settings", "enable_stock_validation"
+#         )
+
+#         # ✅ Create Sales Order document
+#         so = frappe.get_doc({
+#             "doctype": "Sales Order",
+#             "customer": customer,
+#             "company": company_name,
+#             "currency": data.get("currency") or default_currency,
+#             "custom_sales_person": data.get("sales_person"),
+#             "delivery_date": data.get("delivery_date"),
+#             "taxes_and_charges": tax_template,
+#             "items": []
+#         })
+
+#         # ✅ Validate stock availability only if setting is enabled
+#         for item in items:
+#             item_code = item.get("item_code")
+#             req_qty = flt(item.get("qty", 1))
+#             warehouse = item.get("warehouse") or frappe.db.get_value(
+#                 "Item Default", {"parent": item_code}, "default_warehouse"
+#             )
+
+#             if not warehouse:
+#                 return {"status": "error", "message": f"Warehouse not specified for item {item_code}", "code": 400}
+
+#             if enable_stock_validation:
+#                 available_qty = flt(
+#                     frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty") or 0
+#                 )
+
+#                 if req_qty > available_qty:
+#                     return {
+#                         "status": "error",
+#                         "message": f"Insufficient stock: Only {available_qty} qty available for Item {item_code} in {warehouse}",
+#                         "code": 400
+#                     }
+
+#             # ✅ Append item (always)
+#             so.append("items", {
+#                 "item_code": item_code,
+#                 "warehouse": warehouse,
+#                 "qty": req_qty,
+#                 "description": item.get("description", ""),
+#                 "discount_amount": flt(item.get("discount_amount", 0.0)),
+#                 "price_list_rate": flt(item.get("rate", 0.0)),
+#             })
+
+#         # ✅ Apply taxes from template
+#         if tax_template:
+#             so.set_taxes()
+
+#         so.run_method("set_other_charges")
+#         so.run_method("set_missing_values")
+#         so.run_method("calculate_taxes_and_totals")
+
+#         so.insert()
+#         so.submit()
+
+#         response_data = {
+#             "sales_order_id": so.name,
+#             "delivery_date": data.get("delivery_date"),
+#             "customer": customer,
+#             "company": so.company,
+#             "items": items,
+#             "taxes_and_charges": so.taxes_and_charges,
+#             "total": so.total,
+#             "grand_total": so.grand_total,
+#             "status": so.status,
+#         }
+
+#         return {
+#             "status": "success",
+#             "message": "Sales Order created successfully",
+#             "data": response_data,
+#             "code": 201
+#         }
+
+#     except Exception as e:
+#         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
+#         return {"status": "error", "message": str(e), "code": 417}
+
+import frappe
+from frappe.utils import flt
+
 @frappe.whitelist(methods=["POST"])
 def create_sales_order():
     try:
-        from frappe.utils import flt
-
         data = frappe.request.get_json()
         if not data:
             return {"status": "error", "message": "Invalid request data", "code": 400}
@@ -404,6 +526,9 @@ def create_sales_order():
             "Chundakadan Settings", "enable_stock_validation"
         )
 
+        # ✅ Prepare insufficient stock list
+        insufficient_items = []
+
         # ✅ Create Sales Order document
         so = frappe.get_doc({
             "doctype": "Sales Order",
@@ -433,13 +558,11 @@ def create_sales_order():
                 )
 
                 if req_qty > available_qty:
-                    return {
-                        "status": "error",
-                        "message": f"Insufficient stock: Only {available_qty} qty available for Item {item_code} in {warehouse}",
-                        "code": 400
-                    }
+                    insufficient_items.append(
+                        f"Item {item_code} - only {available_qty} in stock, but {req_qty} requested"
+                    )
 
-            # ✅ Append item (always)
+            # ✅ Append item regardless (validation comes before submit)
             so.append("items", {
                 "item_code": item_code,
                 "warehouse": warehouse,
@@ -448,6 +571,21 @@ def create_sales_order():
                 "discount_amount": flt(item.get("discount_amount", 0.0)),
                 "price_list_rate": flt(item.get("rate", 0.0)),
             })
+
+        # ✅ Stop if any stock issues found
+        if insufficient_items:
+            if len(insufficient_items) == 1:
+                return {
+                    "status": "error",
+                    "message": f"Insufficient stock: {insufficient_items[0]}",
+                    "code": 400
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": insufficient_items,
+                    "code": 400
+                }
 
         # ✅ Apply taxes from template
         if tax_template:
