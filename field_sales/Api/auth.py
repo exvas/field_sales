@@ -559,8 +559,7 @@ def create_sales_order():
 
                 if req_qty > available_qty:
                     insufficient_items.append(
-                        f"Item {item_code} - only {available_qty} in stock, but {req_qty} requested"
-                    )
+                    f"Insufficient stock: Item {item_code} - only {available_qty} in stock in warehouse {warehouse}, but {req_qty} requested."                    )
 
             # ✅ Append item regardless (validation comes before submit)
             so.append("items", {
