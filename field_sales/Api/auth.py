@@ -435,7 +435,7 @@ def create_sales_order():
                 if req_qty > available_qty:
                     return {
                         "status": "error",
-                        "message": f"Only {available_qty} qty available for Item {item_code} in {warehouse}, but {req_qty} requested.",
+                        "message": f"Insufficient stock: Only {available_qty} qty available for Item {item_code} in {warehouse}",
                         "code": 400
                     }
 
@@ -1035,99 +1035,7 @@ def get_mode_of_payment():
 
 
 
-# @frappe.whitelist(allow_guest=False)
-# def create_payment_entry_from_sales_invoices():
-#     import json
-#     data = frappe.local.form_dict
 
-#     if frappe.request and frappe.request.data:
-#         data = json.loads(frappe.request.data)
-
-#     customer = data.get("customer")
-#     # sales_person=data.get("sales_person")
-#     total_allocated_amount = data.get("total_allocated_amount")
-#     mode_of_payment = data.get("mode_of_payment")
-#     invoice_allocations = data.get("invoice_allocations", [])
-
-#     if not customer or not total_allocated_amount or not mode_of_payment or not invoice_allocations:
-#         frappe.throw(_("Missing required fields"))
-
-#     # Create Payment Entry
-#     pe = frappe.new_doc("Payment Entry")
-#     pe.payment_type = "Receive"
-#     pe.party_type = "Customer"
-#     pe.party = customer
-#     pe.posting_date = now()
-#     pe.custom_sales_person=data.get("sales_person")
-#     pe.mode_of_payment = mode_of_payment
-#     pe.paid_amount = total_allocated_amount
-#     pe.received_amount = total_allocated_amount
-#     pe.target_exchange_rate = 1
-#     pe.paid_to = frappe.get_value("Mode of Payment Account", {
-#         "parent": mode_of_payment
-#     }, "default_account")
-
-#     for alloc in invoice_allocations:
-#         pe.append("references", {
-#             "reference_doctype": "Sales Invoice",
-#             "reference_name": alloc["invoice"],
-#             "allocated_amount": alloc["amount"]
-#         })
-
-#     pe.insert()
-#     frappe.db.commit()
-
-#     return {
-#         "message": "Payment Entry created",
-#         "payment_entry": pe.name
-#     }
-
-# @frappe.whitelist(methods=["POST"])
-# def create_sales_return():
-#     data = frappe.request.get_json()
-
-#     invoice_name = data.get("invoice_name")
-#     sales_person=data.get("sales_person")
-#     product_name = data.get("product_name")
-#     qty = data.get("qty")
-#     reason = data.get("reason")
-#     buying_date = data.get("buying_date")
-#     notes = data.get("notes")
-
-#     # ✅ FIXED validation
-#     if not (invoice_name and product_name and qty and reason and buying_date):
-#         return {
-#             "status": "error",
-#             "message": "Please fill all required fields.",
-#             "code": 400
-#         }
-
-#     try:
-#         doc = frappe.new_doc("Sales Return")
-#         doc.sales_invoice_id = invoice_name
-#         doc.product_name = product_name
-#         doc.qty = qty
-#         doc.reason = reason
-#         doc.date = buying_date
-#         doc.notes = notes
-#         doc.sales_person_id=sales_person
-#         doc.status = "Open"
-#         doc.insert()
-#         frappe.db.commit()
-
-#         return {
-#             "status": "success",
-#             "message": "Sales Return created",
-#             "sales_return_id": doc.name
-#         }
-
-#     except Exception as e:
-#         frappe.log_error(frappe.get_traceback(), "Sales Return API Error")
-#         return {
-#             "status": "error",
-#             "message": f"An error occurred: {str(e)}",
-#             "code": 500
-#         }
 
 @frappe.whitelist(allow_guest=False)
 def create_payment_entry_from_sales_invoices():
