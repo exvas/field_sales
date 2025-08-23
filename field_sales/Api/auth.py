@@ -1499,3 +1499,37 @@ def create_sales_return():
         "sales_return": sales_return.name,
         "tax_template": sales_return.taxes_and_charges
     }
+
+
+@frappe.whitelist(allow_guest=True)
+def update_chundakadan_settings(enable_stock_validation):
+    try:
+        if not frappe.has_permission("Chundakadan Settings", "write"):
+            return {
+                "status": "error",
+                "message": "Not permitted to update settings",
+                "http_status_code": 403
+            }
+
+        if isinstance(enable_stock_validation, str):
+            enable_stock_validation = enable_stock_validation.lower() == 'true'
+        doc = frappe.get_single("Chundakadan Settings")
+        doc.db_set('enable_stock_validation', 1 if enable_stock_validation else 0)
+        frappe.db.commit()
+
+        return {
+            "status": "success",
+            "message": "Settings updated successfully",
+            "data": {
+                "enable_stock_validation": bool(doc.enable_stock_validation)
+            },
+            "http_status_code": 200
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Settings Update Error")
+        return {
+            "status": "error",
+            "message": str(e),
+            "http_status_code": 500
+        }
