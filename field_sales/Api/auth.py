@@ -1528,6 +1528,30 @@ def update_chundakadan_settings(enable_stock_validation):
 
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Settings Update Error")
+
+@frappe.whitelist(allow_guest=True)
+def get_chundakadan_settings():
+    try:
+        if not frappe.has_permission("Chundakadan Settings", "read"):
+            return {
+                "status": "error",
+                "message": "Not permitted to read settings",
+                "http_status_code": 403
+            }
+
+        doc = frappe.get_single("Chundakadan Settings")
+        
+        return {
+            "status": "success",
+            "message": "Settings retrieved successfully",
+            "data": {
+                "enable_stock_validation": bool(doc.enable_stock_validation)
+            },
+            "http_status_code": 200
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Settings Fetch Error")
         return {
             "status": "error",
             "message": str(e),
