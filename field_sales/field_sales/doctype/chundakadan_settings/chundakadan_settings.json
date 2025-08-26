@@ -5,8 +5,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "enable_stock_validation",
-  "enable_stock_validation_for_erpnext"
+  "enable_stock_validation"
  ],
  "fields": [
   {
@@ -14,19 +13,13 @@
    "fieldname": "enable_stock_validation",
    "fieldtype": "Check",
    "label": "Enable_stock_validation_for_mobile_app"
-  },
-  {
-   "default": "0",
-   "fieldname": "enable_stock_validation_for_erpnext",
-   "fieldtype": "Check",
-   "label": "Enable_stock_validation_for_erpnext"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-08-26 14:56:41.714434",
+ "modified": "2025-08-26 16:18:06.591153",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Chundakadan Settings",
