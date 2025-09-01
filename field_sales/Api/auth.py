@@ -1557,3 +1557,92 @@ def get_chundakadan_settings():
             "message": str(e),
             "http_status_code": 500
         }
+import frappe
+from bs4 import BeautifulSoup
+
+@frappe.whitelist(allow_guest=True)
+def get_task_details():
+    try:
+        sa = frappe.form_dict.get("sales_person")
+        docs = frappe.get_all(
+            "Task",
+            fields=[
+                'name', 'subject', 'status',
+                'custom_customer', 'custom_assigned_to',
+                'exp_start_date', 'exp_end_date', 'description',"custom_remarks"
+            ],
+            filters={"custom_assigned_to":sa}
+        )
+
+        # Strip HTML from description
+        for d in docs:
+            if d.get("description"):
+                soup = BeautifulSoup(d["description"], "html.parser")
+                d["description"] = soup.get_text()
+
+        return {
+            "status": "success",
+            "message": "task details retrieved",
+            "data": docs,
+            "code": 200
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Task Fetch Error")
+        return {
+            "status": "error",
+            "message": str(e),
+            "http_status_code": 500
+        }
+@frappe.whitelist(allow_guest=True)
+def update_status():
+    try:
+        data=frappe.request.get_json()
+        task_name=data.get("task_name")
+        new_status=data.get("status")
+        if not task_name or not new_status:
+            return{
+                "status":"error",
+                "message":"Task name and status are required",
+                "code":400
+            }
+        task=frappe.get_doc("Task",task_name)
+        task.status=new_status
+        task.save(ignore_permissions=True)  
+        frappe.db.commit()
+        return{
+            "satatus":"success",
+            "message":f"Task {task_name} updated to {new_status}",
+            "code":200
+        }
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Task Status Update Error")
+        return {
+            "status": "error",
+            "message": str(e),
+            "code": 500
+        }
+@frappe.whitelist(allow_guest=True)
+def add_remarks():
+    try{
+        data=frappe.request.get_json()
+        remarks=data.get("remarks")
+        task_name=data.get("task_name")
+        task=frappe.get_doc("Task",task_name)
+        task.custom_remarks=remarks
+        task.save(ignore_permissions=True)  
+        frappe.db.commit()
+        return{
+            "satatus":"success",
+            "message":f"remarks {remarks}added to  Task {task_name} ",
+            "code":200
+        }
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "remarks add  Error")
+        return {
+            "status": "error",
+            "message": str(e),
+            "code": 500
+        }
+
+    }
