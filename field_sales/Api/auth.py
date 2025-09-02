@@ -1564,6 +1564,12 @@ from bs4 import BeautifulSoup
 def get_task_details():
     try:
         sa = frappe.form_dict.get("sales_person")
+        if not sa :
+            return{
+                "status":"error",
+                "message":"sales person isrequired",
+                "code":400
+            }
         docs = frappe.get_all(
             "Task",
             fields=[
