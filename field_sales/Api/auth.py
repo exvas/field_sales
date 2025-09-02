@@ -1624,7 +1624,7 @@ def update_status():
         }
 @frappe.whitelist(allow_guest=True)
 def add_remarks():
-    try{
+    try:
         data=frappe.request.get_json()
         remarks=data.get("remarks")
         task_name=data.get("task_name")
@@ -1645,4 +1645,4 @@ def add_remarks():
             "code": 500
         }
 
-    }
+    
