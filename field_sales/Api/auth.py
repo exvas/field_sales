@@ -1603,24 +1603,43 @@ def get_task_details():
 @frappe.whitelist(allow_guest=True)
 def update_status():
     try:
-        data=frappe.request.get_json()
-        task_name=data.get("task_name")
-        new_status=data.get("status")
+        data = frappe.request.get_json()
+        task_name = data.get("task_name")
+        new_status = data.get("status")
+        completion_date = data.get("completion_date")  # get from request
+
         if not task_name or not new_status:
-            return{
-                "status":"error",
-                "message":"Task name and status are required",
-                "code":400
+            return {
+                "status": "error",
+                "message": "Task name and status are required",
+                "code": 400
             }
-        task=frappe.get_doc("Task",task_name)
-        task.status=new_status
-        task.save(ignore_permissions=True)  
+
+        # If status is Completed → completion_date is mandatory
+        if new_status == "Completed":
+            if not completion_date:
+                return {
+                    "status": "error",
+                    "message": "Completion date is required when status is Completed",
+                    "code": 400
+                }
+
+        task = frappe.get_doc("Task", task_name)
+        task.status = new_status
+
+        # Save completion_date if provided
+        if new_status == "Completed" and completion_date:
+            task.completed_on = completion_date
+
+        task.save(ignore_permissions=True)
         frappe.db.commit()
-        return{
-            "satatus":"success",
-            "message":f"Task {task_name} updated to {new_status}",
-            "code":200
+
+        return {
+            "status": "success",
+            "message": f"Task {task_name} updated to {new_status}",
+            "code": 200
         }
+
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Task Status Update Error")
         return {
@@ -1628,6 +1647,7 @@ def update_status():
             "message": str(e),
             "code": 500
         }
+
 @frappe.whitelist(allow_guest=True)
 def add_remarks():
     try:
