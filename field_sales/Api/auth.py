@@ -843,7 +843,7 @@ def create_payment_entry_from_sales_invoices():
     reference_date = data.get("reference_date")
 
     # ✅ Mandatory field check
-    if not customer or not total_allocated_amount or not mode_of_payment or not invoice_allocations:
+    if not customer or not total_allocated_amount or not mode_of_payment :
         frappe.throw(_("Missing required fields"))
 
     # ✅ If mode_of_payment is Cheque or Bank Transfer, reference_no & reference_date are required
@@ -871,12 +871,24 @@ def create_payment_entry_from_sales_invoices():
         pe.reference_no = reference_no
         pe.reference_date = reference_date
 
+    allocated_total = 0
+
+    # Allocate only if invoice has outstanding
     for alloc in invoice_allocations:
-        pe.append("references", {
-            "reference_doctype": "Sales Invoice",
-            "reference_name": alloc["invoice"],
-            "allocated_amount": alloc["amount"]
-        })
+        invoice_outstanding = frappe.get_value("Sales Invoice", alloc["invoice"], "outstanding_amount") or 0
+        allocation_amount = min(float(alloc["amount"]), invoice_outstanding)
+
+        if allocation_amount > 0:
+            pe.append("references", {
+                "reference_doctype": "Sales Invoice",
+                "reference_name": alloc["invoice"],
+                "allocated_amount": allocation_amount
+            })
+            allocated_total += allocation_amount
+
+    # Remaining amount becomes customer advance
+    if float(total_allocated_amount) > allocated_total:
+        pe.unallocated_amount = float(total_allocated_amount) - allocated_total
 
     pe.insert()
     frappe.db.commit()
