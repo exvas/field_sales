@@ -1,6 +1,6 @@
 {
  "charts": [],
- "content": "[{\"id\":\"EBmGtQzcGD\",\"type\":\"header\",\"data\":{\"text\":\"<span style=\\\"font-size: 18px; letter-spacing: 0.18px;\\\"><b>View Employee</b></span>\",\"col\":12}},{\"id\":\"NxtfpmvN-P\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"View\",\"col\":3}}]",
+ "content": "[{\"id\":\"EBmGtQzcGD\",\"type\":\"header\",\"data\":{\"text\":\"<span style=\\\"font-size: 18px; letter-spacing: 0.18px;\\\"><b>View Employee</b></span>\",\"col\":12}},{\"id\":\"VUc-173rIz\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Customer visit\",\"col\":3}},{\"id\":\"mQN_jLODKm\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"Employee Location\",\"col\":3}},{\"id\":\"NxtfpmvN-P\",\"type\":\"shortcut\",\"data\":{\"shortcut_name\":\"View\",\"col\":3}}]",
  "creation": "2025-08-06 12:27:26.100331",
  "custom_blocks": [],
  "docstatus": 0,
@@ -13,7 +13,7 @@
  "is_hidden": 0,
  "label": "Tracks",
  "links": [],
- "modified": "2025-08-06 12:35:22.551512",
+ "modified": "2025-10-13 13:03:15.825924",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Tracks",
@@ -31,6 +31,22 @@
    "label": "View",
    "link_to": "location-sales",
    "type": "Page"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Employee Location",
+   "link_to": "Employee Location Log",
+   "stats_filter": "[]",
+   "type": "DocType"
+  },
+  {
+   "color": "Grey",
+   "doc_view": "List",
+   "label": "Customer visit",
+   "link_to": "Customer Visit Log",
+   "stats_filter": "[]",
+   "type": "DocType"
   }
  ],
  "title": "Tracks"
