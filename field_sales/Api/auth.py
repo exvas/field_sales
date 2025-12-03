@@ -266,7 +266,7 @@ def get_customers():
 
     return {"message": customers}
 
-
+#hello
 
 from frappe.utils import flt
 
@@ -322,6 +322,7 @@ def create_sales_order():
             "custom_sales_person": data.get("sales_person"),
             "delivery_date": data.get("delivery_date"),
             "taxes_and_charges": tax_template,
+            "ignore_pricing_rule": 1,  # ✅ Add this to skip pricing rule issues
             "items": []
         })
 
@@ -329,64 +330,105 @@ def create_sales_order():
         for item in items:
             item_code = item.get("item_code")
             req_qty = flt(item.get("qty", 1))
+            item_rate = flt(item.get("rate", 0.0))
+            
+            # ✅ Get item details
+            item_details = frappe.db.get_value(
+                "Item", 
+                item_code, 
+                ["stock_uom", "item_name"], 
+                as_dict=True
+            )
+            
+            if not item_details:
+                return {
+                    "status": "error", 
+                    "message": f"Item {item_code} does not exist", 
+                    "code": 404
+                }
+            
             warehouse = item.get("warehouse") or frappe.db.get_value(
-                "Item Default", {"parent": item_code}, "default_warehouse"
+                "Item Default", 
+                {"parent": item_code}, 
+                "default_warehouse"
             )
 
             if not warehouse:
-                return {"status": "error", "message": f"Warehouse not specified for item {item_code}", "code": 400}
+                return {
+                    "status": "error", 
+                    "message": f"Warehouse not specified for item {item_code}", 
+                    "code": 400
+                }
 
             if enable_stock_validation:
                 available_qty = flt(
-                    frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty") or 0
+                    frappe.db.get_value(
+                        "Bin", 
+                        {"item_code": item_code, "warehouse": warehouse}, 
+                        "actual_qty"
+                    ) or 0
                 )
 
                 if req_qty > available_qty:
                     insufficient_items.append(
-                    f"Insufficient stock: Item {item_code} - only {available_qty} in stock in warehouse {warehouse}, but {req_qty} requested."                    )
+                        f"Item {item_code} - Available: {available_qty}, Requested: {req_qty}"
+                    )
 
-            # ✅ Append item regardless (validation comes before submit)
+            # ✅ Append item with ALL required fields
             so.append("items", {
                 "item_code": item_code,
+                "item_name": item_details.item_name,
                 "warehouse": warehouse,
                 "qty": req_qty,
-                "description": item.get("description", ""),
+                "rate": item_rate,  # ✅ CRITICAL: Set rate (selling price)
+                "price_list_rate": item_rate,  # ✅ Set price list rate
+                "uom": item_details.stock_uom,  # ✅ Add UOM
+                "stock_uom": item_details.stock_uom,  # ✅ Add stock UOM
+                "conversion_factor": 1.0,  # ✅ Prevent None comparison
+                "description": item.get("description") or item_details.item_name,
                 "discount_amount": flt(item.get("discount_amount", 0.0)),
-                "price_list_rate": flt(item.get("rate", 0.0)),
+                "margin_type": "",  # ✅ Explicitly set to empty to avoid None
+                "margin_rate_or_amount": 0.0,  # ✅ Prevent None comparison
             })
 
         # ✅ Stop if any stock issues found
         if insufficient_items:
-            if len(insufficient_items) == 1:
-                return {
-                    "status": "error",
-                    "message": f"Insufficient stock: {insufficient_items[0]}",
-                    "code": 400
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": insufficient_items,
-                    "code": 400
-                }
+            return {
+                "status": "error",
+                "message": insufficient_items if len(insufficient_items) > 1 else insufficient_items[0],
+                "code": 400
+            }
 
         # ✅ Apply taxes from template
         if tax_template:
             so.set_taxes()
 
-        so.run_method("set_other_charges")
+        # ✅ Use flags to control validation
+        so.flags.ignore_validate = False
+        so.flags.ignore_mandatory = False
+        
         so.run_method("set_missing_values")
         so.run_method("calculate_taxes_and_totals")
 
-        so.insert()
+        # ✅ Insert and submit
+        so.insert(ignore_permissions=True)
         so.submit()
+        
+        frappe.db.commit()
 
         response_data = {
             "sales_order_id": so.name,
             "delivery_date": data.get("delivery_date"),
             "customer": customer,
             "company": so.company,
-            "items": items,
+            "items": [
+                {
+                    "item_code": i.item_code,
+                    "qty": i.qty,
+                    "rate": i.rate,
+                    "amount": i.amount
+                } for i in so.items
+            ],
             "taxes_and_charges": so.taxes_and_charges,
             "total": so.total,
             "grand_total": so.grand_total,
@@ -402,8 +444,8 @@ def create_sales_order():
 
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
+        frappe.db.rollback()
         return {"status": "error", "message": str(e), "code": 417}
-
 
 @frappe.whitelist()
 def get_sales_orders_with_details(sales_person_id=None):
@@ -1683,4 +1725,4 @@ def add_remarks():
             "code": 500
         }
 
-    
+    #najath fool
