@@ -279,45 +279,21 @@ def create_sales_order():
 
         customer = data.get("customer")
         items = data.get("items")
-        delivery_date = data.get("delivery_date")
 
-        # Validation
         if not customer:
             return {"status": "error", "message": "Customer is required", "code": 400}
         if not items or not isinstance(items, list):
             return {"status": "error", "message": "At least one item is required", "code": 400}
-        if not delivery_date:
-            return {"status": "error", "message": "Delivery date is required", "code": 400}
 
-        # Check if customer exists
+        # ✅ Check if customer exists
         if not frappe.db.exists("Customer", customer):
             return {"status": "error", "message": f"Customer '{customer}' does not exist.", "code": 404}
 
-        # Fetch company
-        companies = frappe.get_all("Company", fields=["name"], limit=1)
-        if not companies:
-            return {"status": "error", "message": "No company found in system", "code": 500}
-        
-        company_name = companies[0].name
-        default_currency = frappe.get_cached_value("Company", company_name, "default_currency") or "INR"
+        # ✅ Fetch a company dynamically
+        company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
+        default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
 
-        # ✅ Get customer's price list or use default
-        customer_price_list = frappe.db.get_value("Customer", customer, "default_price_list")
-        selling_price_list = customer_price_list or "Standard Selling"
-        
-        # Validate price list exists
-        if not frappe.db.exists("Price List", selling_price_list):
-            selling_price_list = "Standard Selling"
-            # Create Standard Selling if it doesn't exist
-            if not frappe.db.exists("Price List", "Standard Selling"):
-                frappe.get_doc({
-                    "doctype": "Price List",
-                    "price_list_name": "Standard Selling",
-                    "selling": 1,
-                    "currency": default_currency
-                }).insert(ignore_permissions=True)
-
-        # Fetch default Sales Taxes and Charges Template
+        # ✅ Fetch default Sales Taxes and Charges Template
         tax_template = frappe.db.get_value(
             "Sales Taxes and Charges Template",
             {"is_default": 1, "company": company_name},
@@ -329,178 +305,93 @@ def create_sales_order():
             if frappe.db.exists("Sales Taxes and Charges Template", fallback_template):
                 tax_template = fallback_template
 
-        # Read stock validation setting
+        # ✅ Read setting from Chundakkadan Settings
         enable_stock_validation = frappe.db.get_single_value(
             "Chundakadan Settings", "enable_stock_validation"
-        ) or 0
+        )
 
+        # ✅ Prepare insufficient stock list
         insufficient_items = []
 
-        # ✅ Create Sales Order with ALL required fields
+        # ✅ Create Sales Order document
         so = frappe.get_doc({
             "doctype": "Sales Order",
             "customer": customer,
             "company": company_name,
-            "transaction_date": frappe.utils.today(),  # ✅ Critical!
-            "delivery_date": delivery_date,
             "currency": data.get("currency") or default_currency,
-            "selling_price_list": selling_price_list,  # ✅ Critical!
-            "price_list_currency": default_currency,  # ✅ Important!
-            "conversion_rate": 1.0,  # ✅ Important!
             "custom_sales_person": data.get("sales_person"),
+            "delivery_date": data.get("delivery_date"),
             "taxes_and_charges": tax_template,
             "items": []
         })
 
-        # Process items
+        # ✅ Validate stock availability only if setting is enabled
         for item in items:
             item_code = item.get("item_code")
             req_qty = flt(item.get("qty", 1))
-            
-            # Validate item exists
-            if not frappe.db.exists("Item", item_code):
-                return {"status": "error", "message": f"Item {item_code} does not exist", "code": 404}
-            
-            # Get item details
-            item_doc = frappe.get_cached_doc("Item", item_code)
-            
-            # Get warehouse with better fallback logic
-            warehouse = item.get("warehouse")
-            if not warehouse:
-                # Try Item Default
-                warehouse = frappe.db.get_value(
-                    "Item Default", 
-                    {"parent": item_code, "company": company_name}, 
-                    "default_warehouse"
-                )
-            if not warehouse:
-                # Try Company default
-                warehouse = frappe.db.get_value("Company", company_name, "default_warehouse")
-            
-            if not warehouse:
-                return {
-                    "status": "error", 
-                    "message": f"No warehouse specified for item {item_code}. Please configure default warehouse.", 
-                    "code": 400
-                }
+            warehouse = item.get("warehouse") or frappe.db.get_value(
+                "Item Default", {"parent": item_code}, "default_warehouse"
+            )
 
-            # Stock validation
+            if not warehouse:
+                return {"status": "error", "message": f"Warehouse not specified for item {item_code}", "code": 400}
+
             if enable_stock_validation:
                 available_qty = flt(
-                    frappe.db.get_value(
-                        "Bin", 
-                        {"item_code": item_code, "warehouse": warehouse}, 
-                        "actual_qty"
-                    ) or 0
+                    frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty") or 0
                 )
 
                 if req_qty > available_qty:
                     insufficient_items.append(
-                        f"{item_code}: Need {req_qty}, Only {available_qty} available in {warehouse}"
-                    )
+                    f"Insufficient stock: Item {item_code} - only {available_qty} in stock in warehouse {warehouse}, but {req_qty} requested."                    )
 
-            # Get rate
-            rate = flt(item.get("rate", 0))
-            if rate <= 0:
-                # Fetch from Item Price
-                item_price_data = frappe.db.get_value(
-                    "Item Price",
-                    {
-                        "item_code": item_code,
-                        "selling": 1,
-                        "price_list": selling_price_list
-                    },
-                    ["price_list_rate", "currency"],
-                    as_dict=True
-                )
-                
-                if item_price_data:
-                    rate = flt(item_price_data.price_list_rate)
-            
-            if rate <= 0:
+            # ✅ Append item regardless (validation comes before submit)
+            so.append("items", {
+                "item_code": item_code,
+                "warehouse": warehouse,
+                "qty": req_qty,
+                "description": item.get("description", ""),
+                "discount_amount": flt(item.get("discount_amount", 0.0)),
+                "price_list_rate": flt(item.get("rate", 0.0)),
+            })
+
+        # ✅ Stop if any stock issues found
+        if insufficient_items:
+            if len(insufficient_items) == 1:
                 return {
-                    "status": "error", 
-                    "message": f"No price configured for item {item_code} in price list {selling_price_list}", 
+                    "status": "error",
+                    "message": f"Insufficient stock: {insufficient_items[0]}",
+                    "code": 400
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": insufficient_items,
                     "code": 400
                 }
 
-            # ✅ Get UOM and conversion factor properly
-            uom = item.get("uom") or item_doc.stock_uom
-            conversion_factor = flt(item.get("conversion_factor", 1.0))
-            
-            # If UOM is different from stock UOM, get conversion factor
-            if uom != item_doc.stock_uom:
-                uom_conversion = frappe.db.get_value(
-                    "UOM Conversion Detail",
-                    {"parent": item_code, "uom": uom},
-                    "conversion_factor"
-                )
-                if uom_conversion:
-                    conversion_factor = flt(uom_conversion)
-
-            # ✅ Append item with complete data
-            so.append("items", {
-                "item_code": item_code,
-                "item_name": item_doc.item_name,
-                "description": item.get("description") or item_doc.description or item_doc.item_name,
-                "warehouse": warehouse,
-                "qty": req_qty,
-                "uom": uom,
-                "stock_uom": item_doc.stock_uom,
-                "conversion_factor": conversion_factor,
-                "rate": rate,
-                "price_list_rate": rate,
-                "discount_amount": flt(item.get("discount_amount", 0.0)),
-                "delivery_date": delivery_date,
-            })
-
-        # Check stock issues
-        if insufficient_items:
-            return {
-                "status": "error",
-                "message": "Insufficient stock: " + "; ".join(insufficient_items),
-                "code": 400
-            }
-
-        # ✅ Apply document methods in correct order
-        so.flags.ignore_permissions = True
-        
-        # Set missing values first
-        so.run_method("set_missing_values")
-        
-        # Then apply taxes if template exists
+        # ✅ Apply taxes from template
         if tax_template:
             so.set_taxes()
-        
-        # Finally calculate totals
+
+        so.run_method("set_other_charges")
+        so.run_method("set_missing_values")
         so.run_method("calculate_taxes_and_totals")
 
-        # Insert and submit
-        so.insert(ignore_permissions=True)
+        so.insert()
         so.submit()
 
-        # Prepare response
         response_data = {
             "sales_order_id": so.name,
-            "delivery_date": delivery_date,
+            "delivery_date": data.get("delivery_date"),
             "customer": customer,
             "company": so.company,
-            "items": [
-                {
-                    "item_code": i.item_code,
-                    "item_name": i.item_name,
-                    "qty": i.qty,
-                    "rate": i.rate,
-                    "amount": i.amount
-                } for i in so.items
-            ],
+            "items": items,
             "taxes_and_charges": so.taxes_and_charges,
             "total": so.total,
             "grand_total": so.grand_total,
             "status": so.status,
         }
-
-        frappe.db.commit()
 
         return {
             "status": "success",
@@ -509,14 +400,8 @@ def create_sales_order():
             "code": 201
         }
 
-    except frappe.ValidationError as e:
-        frappe.log_error(frappe.get_traceback(), "Sales Order Validation Error")
-        frappe.db.rollback()
-        return {"status": "error", "message": str(e), "code": 400}
-    
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "Sales Order Creation Error")
-        frappe.db.rollback()
         return {"status": "error", "message": str(e), "code": 417}
 
 
