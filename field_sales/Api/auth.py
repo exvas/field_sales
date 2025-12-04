@@ -1,26 +1,20 @@
 import json
 import frappe
 from frappe import _
-from frappe.utils import now
+from frappe.utils import now, nowdate, flt
 from frappe.model.document import Document
-
+from frappe.utils.password import set_encrypted_password
+from bs4 import BeautifulSoup
 
 @frappe.whitelist(allow_guest=True)
 def response(message, data, success, status_code):
-    '''method to generates responses of an API
-       args:
-            message : response message string
-            data : json object of the data
-            success : True or False depending on the API response
-            status_code : status of the request'''
+    '''method to generates responses of an API'''
     frappe.clear_messages()
     frappe.local.response["message"] = message
     frappe.local.response["data"] = data
     frappe.local.response["success"] = success
     frappe.local.response["http_status_code"] = status_code
     return
-
-
 
 @frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
 def user_login(usr, pwd, device_id=None):
@@ -123,11 +117,8 @@ def user_login(usr, pwd, device_id=None):
         frappe.local.response.http_status_code = 401
 
 def set_device_to_mobile():
-    # Ensure session exists before modifying
     if hasattr(frappe.local, 'session') and frappe.local.session.data:
-        # Set the device in session data to 'mobile'
         frappe.local.session.data['device'] = 'mobile'
-        # Commit the session change
         frappe.local.session.save()
     else:
         frappe.throw("Session not found.")
@@ -149,9 +140,6 @@ def generate_device_id(user, device_id):
         user_deveice_id = user_details.device_id
     return user_deveice_id
 
-from frappe.utils import nowdate
-from frappe.utils.password import set_encrypted_password
-
 def generate_keys(user):
     user_doc = frappe.get_doc("User", user)
 
@@ -167,7 +155,6 @@ def generate_keys(user):
     frappe.db.commit()
 
     return user_doc.api_key, new_api_secret
- # Return both!
 
 @frappe.whitelist(methods=["GET", "POST"], allow_guest=True)
 def logout(usr):
@@ -200,8 +187,6 @@ def logout(usr):
             "message": "User not found!",
         }
         frappe.local.response.http_status_code = 404
-
-
 
 @frappe.whitelist(allow_guest=True)
 def get_items(price_list="Standard Selling"):
@@ -240,7 +225,6 @@ def get_items(price_list="Standard Selling"):
 
     return result
 
-
 @frappe.whitelist()
 def get_customers():
     customers = frappe.get_all(
@@ -253,11 +237,10 @@ def get_customers():
             "territory",
             "mobile_no",
             "email_id",
-            "gstin"  # Include GSTIN field
+            "gstin"
         ]
     )
 
-    # Add a flag for each customer indicating if GSTIN is present
     for customer in customers:
         if customer.get("gstin"):
             customer["has_gstin"] = True
@@ -266,10 +249,10 @@ def get_customers():
 
     return {"message": customers}
 
-#hello
 
-from frappe.utils import flt
-
+# ==========================================
+#  ✅ CORRECTED FUNCTION
+# ==========================================
 @frappe.whitelist(methods=["POST"])
 def create_sales_order():
     try:
@@ -300,6 +283,7 @@ def create_sales_order():
             "name"
         )
 
+        # Fallback if no default is set
         if not tax_template:
             fallback_template = "Output GST In-state"
             if frappe.db.exists("Sales Taxes and Charges Template", fallback_template):
@@ -313,29 +297,38 @@ def create_sales_order():
         # ✅ Prepare insufficient stock list
         insufficient_items = []
 
-        # ✅ Create Sales Order document
+        # ✅ Initialize Sales Order document
         so = frappe.get_doc({
             "doctype": "Sales Order",
             "customer": customer,
             "company": company_name,
             "currency": data.get("currency") or default_currency,
             "custom_sales_person": data.get("sales_person"),
-            "delivery_date": data.get("delivery_date"),
-            "taxes_and_charges": tax_template,
+            "delivery_date": data.get("delivery_date") or nowdate(),
+            "transaction_date": data.get("transaction_date") or nowdate(),
             "items": []
         })
 
-        # ✅ Validate stock availability only if setting is enabled
+        # ✅ Process Items
         for item in items:
             item_code = item.get("item_code")
             req_qty = flt(item.get("qty", 1))
-            warehouse = item.get("warehouse") or frappe.db.get_value(
-                "Item Default", {"parent": item_code}, "default_warehouse"
-            )
+            
+            # Logic to find the correct warehouse
+            warehouse = item.get("warehouse") 
+            
+            # 1. Try Item Defaults (Company specific)
+            if not warehouse:
+                warehouse = frappe.db.get_value("Item Default", {"parent": item_code, "company": company_name}, "default_warehouse")
+            
+            # 2. Try Item Master default
+            if not warehouse:
+                warehouse = frappe.db.get_value("Item", item_code, "default_warehouse")
 
             if not warehouse:
                 return {"status": "error", "message": f"Warehouse not specified for item {item_code}", "code": 400}
 
+            # ✅ Validate stock availability only if setting is enabled
             if enable_stock_validation:
                 available_qty = flt(
                     frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty") or 0
@@ -343,16 +336,18 @@ def create_sales_order():
 
                 if req_qty > available_qty:
                     insufficient_items.append(
-                    f"Insufficient stock: Item {item_code} - only {available_qty} in stock in warehouse {warehouse}, but {req_qty} requested."                    )
+                        f"Insufficient stock: Item {item_code} - only {available_qty} in stock in warehouse {warehouse}, but {req_qty} requested."
+                    )
 
-            # ✅ Append item regardless (validation comes before submit)
+            # ✅ Append item with BOTH price_list_rate AND rate to prevent NoneType error
             so.append("items", {
                 "item_code": item_code,
                 "warehouse": warehouse,
                 "qty": req_qty,
                 "description": item.get("description", ""),
                 "discount_amount": flt(item.get("discount_amount", 0.0)),
-                "price_list_rate": flt(item.get("rate", 0.0)),
+                "price_list_rate": flt(item.get("rate", 0.0)), 
+                "rate": flt(item.get("rate", 0.0)),  # <--- CRITICAL FIX
             })
 
         # ✅ Stop if any stock issues found
@@ -370,20 +365,24 @@ def create_sales_order():
                     "code": 400
                 }
 
-        # ✅ Apply taxes from template
+        # ✅ Apply Taxes & Calculations
+        # We call set_missing_values first to populate UOMs and conversion factors
+        so.run_method("set_missing_values")
+
         if tax_template:
+            so.taxes_and_charges = tax_template
             so.set_taxes()
 
         so.run_method("set_other_charges")
-        so.run_method("set_missing_values")
         so.run_method("calculate_taxes_and_totals")
 
+        # ✅ Insert and Submit
         so.insert()
         so.submit()
 
         response_data = {
             "sales_order_id": so.name,
-            "delivery_date": data.get("delivery_date"),
+            "delivery_date": so.delivery_date,
             "customer": customer,
             "company": so.company,
             "items": items,
@@ -413,12 +412,11 @@ def get_sales_orders_with_details(sales_person_id=None):
             "message": "Sales Person ID is required"
         }
 
-    # ✅ Filter directly with the custom_sales_person field in Sales Order
     sales_order_names = frappe.get_all(
         "Sales Order",
         filters={
             "custom_sales_person": sales_person_id,
-            "docstatus": 1  # Only submitted orders
+            "docstatus": 1
         },
         pluck="name"
     )
@@ -449,9 +447,6 @@ def get_sales_orders_with_details(sales_person_id=None):
         "sales_orders": sales_orders
     }
 
-import frappe
-from frappe import _
-
 @frappe.whitelist()
 def get_employee_location_entries(employee=None):
     if not employee:
@@ -459,8 +454,6 @@ def get_employee_location_entries(employee=None):
 
     try:
         results = []
-        
-        # Get all parent Employee Location Log records for this employee
         logs = frappe.get_all(
             "Employee Location Log",
             filters={"employee": employee},
@@ -472,7 +465,6 @@ def get_employee_location_entries(employee=None):
 
         log_names = [log.name for log in logs]
 
-        # Get child entries from Employee Location Entry where parent is in log_names
         entries = frappe.get_all(
             "Employee Location Entry",
             filters={"parent": ["in", log_names]},
@@ -485,11 +477,8 @@ def get_employee_location_entries(employee=None):
         frappe.log_error(frappe.get_traceback(), "get_employee_location_entries error")
         frappe.throw(_("Failed to fetch employee location entries."))
 
-
-
 @frappe.whitelist(allow_guest=False)
 def get_sales_invoice_list():
-    # Get sales_person from URL params
     sales_person = frappe.request.args.get("sales_person")
     if not sales_person:
         return {
@@ -497,14 +486,12 @@ def get_sales_invoice_list():
             "message": "Missing sales_person parameter"
         }
 
-    # Fetch only invoices matching this sales person
     invoices = frappe.get_all(
         "Sales Invoice",
         filters={
             "docstatus": 1,
             "custom_sales_person": sales_person,
             "is_return": 0 
-             # ✅ Filter by custom field
         },
         fields=[
             "name", "customer", "posting_date", "due_date",
@@ -515,7 +502,6 @@ def get_sales_invoice_list():
     result = []
 
     for inv in invoices:
-        # Fetch Sales Invoice Items
         items = frappe.get_all(
             "Sales Invoice Item",
             filters={"parent": inv.name},
@@ -524,7 +510,6 @@ def get_sales_invoice_list():
             ]
         )
 
-        # Fetch Payment Entry References linked to this Sales Invoice
         payment_refs = frappe.get_all(
             "Payment Entry Reference",
             filters={
@@ -532,9 +517,8 @@ def get_sales_invoice_list():
                 "reference_name": inv.name
             },
             fields=["parent", "allocated_amount"],
-              )
+        )
 
-        # Fetch full Payment Entry details
         payments = []
         for ref in payment_refs:
             try:
@@ -548,7 +532,7 @@ def get_sales_invoice_list():
                     "status": payment.status
                 })
             except frappe.DoesNotExistError:
-                continue  # If payment entry is deleted or missing
+                continue
 
         result.append({
             "invoice_id": inv.name,
@@ -568,9 +552,6 @@ def get_sales_invoice_list():
         "invoice_count": len(result),
         "invoices": result
     }
-
-
-from frappe.utils import nowdate
 
 @frappe.whitelist(methods=["POST"])
 def pay_sales_invoice():
@@ -606,7 +587,6 @@ def pay_sales_invoice():
             "code": 400
         }
 
-    # Get Paid To Account based on mode of payment and company
     paid_to = frappe.db.get_value("Mode of Payment Account", {
         "parent": mode_of_payment,
         "company": invoice.company
@@ -619,7 +599,6 @@ def pay_sales_invoice():
             "code": 400
         }
 
-    # Base Payment Entry
     payment_entry_data = {
         "doctype": "Payment Entry",
         "payment_type": "Receive",
@@ -644,7 +623,6 @@ def pay_sales_invoice():
         ]
     }
 
-    # Extra fields for Cheque / Bank Transfer
     if mode_of_payment.lower() in ["Cheque", "Bank Draft"]:
         if not reference_no or not reference_date:
             return {
@@ -653,14 +631,12 @@ def pay_sales_invoice():
                 "code": 400
             }
 
-        # For cheque, map to ERPNext fields
         if mode_of_payment.lower() == "cheque":
             payment_entry_data.update({
                 "cheque_no": reference_no,
                 "cheque_date": reference_date
             })
 
-        # For bank transfer, ERPNext uses reference fields
         if mode_of_payment.lower() == "bank transfer":
             payment_entry_data.update({
                 "reference_no": reference_no,
@@ -669,23 +645,19 @@ def pay_sales_invoice():
 
     payment_entry = frappe.get_doc(payment_entry_data)
     payment_entry.insert(ignore_permissions=True)
-    # payment_entry.submit()
 
     return {
         "status": "success",
         "payment_entry": payment_entry.name
     }
 
-
-
 @frappe.whitelist()
 def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None):
     if not sales_person:
         frappe.throw("Sales Person ID is required")
 
-    # Build filters
     filters = {
-        "docstatus": 1,  # Submitted invoices only
+        "docstatus": 1,
         "custom_sales_person": sales_person,
         "is_return": 0   
     }
@@ -694,7 +666,6 @@ def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None)
         filters["customer"] = customer
 
     try:
-        # Fetch invoices based on filters
         invoices = frappe.get_all(
             "Sales Invoice",
             filters=filters,
@@ -714,7 +685,6 @@ def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None)
         total_outstanding = 0
 
         for inv in invoices:
-            # Get items for each invoice
             items = frappe.get_all(
                 "Sales Invoice Item",
                 filters={"parent": inv.name},
@@ -750,9 +720,6 @@ def get_customer_sales_invoices_by_salesperson(sales_person=None, customer=None)
             "message": str(e)
         }
 
-
-
-
 @frappe.whitelist()
 def get_location_data(employee=None, date=None):
     if not employee:
@@ -761,7 +728,6 @@ def get_location_data(employee=None, date=None):
         frappe.throw(_("Date is required"))
 
     try:
-        # Get Employee Location Logs for the date
         logs = frappe.get_all(
             "Employee Location Log",
             filters={
@@ -775,7 +741,6 @@ def get_location_data(employee=None, date=None):
 
         location_entries = []
         if log_names:
-            # Get Employee Location Entries
             location_entries = frappe.get_all(
                 "Employee Location Entry",
                 filters={"parent": ["in", log_names]},
@@ -787,7 +752,6 @@ def get_location_data(employee=None, date=None):
                 if entry.get("time"):
                     entry["time"] = frappe.utils.format_time(entry["time"])
 
-        # Get Customer Visit Log for the employee and date
         visit_logs = frappe.get_all(
             "Customer Visit Log",
             filters={
@@ -812,24 +776,17 @@ def get_mode_of_payment():
         mode=frappe.get_all(
             "Mode of Payment",
             fields=["name","execute"]
-                          )
+        )
         for m in mode:
             m["execute"]=bool(m.get("execute"))
 
         return mode
 
-
-
     except Exception as e:
         frappe.throw("failed to fetch"+str(e))
 
-
-
-
-
 @frappe.whitelist(allow_guest=False)
 def create_payment_entry_from_sales_invoices():
-    import json
     data = frappe.local.form_dict
 
     if frappe.request and frappe.request.data:
@@ -842,16 +799,13 @@ def create_payment_entry_from_sales_invoices():
     reference_no = data.get("reference_no")
     reference_date = data.get("reference_date")
 
-    # ✅ Mandatory field check
     if not customer or not total_allocated_amount or not mode_of_payment :
         frappe.throw(_("Missing required fields"))
 
-    # ✅ If mode_of_payment is Cheque or Bank Transfer, reference_no & reference_date are required
     if mode_of_payment in ["Cheque", "Bank Transfer"]:
         if not reference_no or not reference_date:
             frappe.throw(_("Reference No and Reference Date are required for Cheque or Bank Transfer payments."))
 
-    # Create Payment Entry
     pe = frappe.new_doc("Payment Entry")
     pe.payment_type = "Receive"
     pe.party_type = "Customer"
@@ -866,14 +820,12 @@ def create_payment_entry_from_sales_invoices():
         "parent": mode_of_payment
     }, "default_account")
 
-    # ✅ Add reference no & date for Cheque / Bank Transfer
     if mode_of_payment in ["Cheque", "Bank Draft"]:
         pe.reference_no = reference_no
         pe.reference_date = reference_date
 
     allocated_total = 0
 
-    # Allocate only if invoice has outstanding
     for alloc in invoice_allocations:
         invoice_outstanding = frappe.get_value("Sales Invoice", alloc["invoice"], "outstanding_amount") or 0
         allocation_amount = min(float(alloc["amount"]), invoice_outstanding)
@@ -886,7 +838,6 @@ def create_payment_entry_from_sales_invoices():
             })
             allocated_total += allocation_amount
 
-    # Remaining amount becomes customer advance
     if float(total_allocated_amount) > allocated_total:
         pe.unallocated_amount = float(total_allocated_amount) - allocated_total
 
@@ -897,7 +848,6 @@ def create_payment_entry_from_sales_invoices():
         "message": "Payment Entry created",
         "payment_entry": pe.name
     }
-
 
 @frappe.whitelist(allow_guest=True)
 def get_sales_returns(sales_person=None, invoice_id=None):
@@ -910,11 +860,11 @@ def get_sales_returns(sales_person=None, invoice_id=None):
             }
 
         filters = {
-            "is_return": 1,  # ensure only sales returns
+            "is_return": 1,
             "custom_sales_person": sales_person
         }
 
-        if invoice_id:  # filter for specific sales invoice if provided
+        if invoice_id:
             filters["return_against"] = invoice_id
 
         sales_returns = frappe.get_all(
@@ -922,7 +872,7 @@ def get_sales_returns(sales_person=None, invoice_id=None):
             filters=filters,
             fields=[
                 "name",
-                "return_against",   # original invoice id if available
+                "return_against",
                 "customer",
                 "company",
                 "posting_date",
@@ -933,7 +883,6 @@ def get_sales_returns(sales_person=None, invoice_id=None):
             order_by="creation desc"
         )
 
-        # fetch child items for each return
         for sr in sales_returns:
             sr["items"] = frappe.get_all(
                 "Sales Invoice Item",
@@ -956,24 +905,21 @@ def get_sales_returns(sales_person=None, invoice_id=None):
 
 @frappe.whitelist()
 def payment_entry_status():
-    # Get parameters from URL query string
     customer_name = frappe.request.args.get("customer_name")
     sales_person = frappe.request.args.get("sales_person")
 
-    # Validate required parameters
     if not customer_name:
         return {"status": "error", "message": "Missing customer_name"}
     if not sales_person:
         return {"status": "error", "message": "Missing sales_person"}
 
-    # Fetch Draft Payment Entries for given customer & sales person
     payment_entries = frappe.get_all(
         "Payment Entry",
         filters={
             "party_type": "Customer",
             "party": customer_name,
-            "custom_sales_person": sales_person,  # ✅ Filter by custom_sales_person
-            "docstatus": 0  # Draft only
+            "custom_sales_person": sales_person,
+            "docstatus": 0
         },
         fields=["name", "posting_date", "paid_amount", "reference_no"]
     )
@@ -982,7 +928,6 @@ def payment_entry_status():
     total_allocated = 0
 
     for pe in payment_entries:
-        # Fetch related invoice references
         references = frappe.get_all(
             "Payment Entry Reference",
             filters={"parent": pe.name},
@@ -1013,8 +958,6 @@ def payment_entry_status():
         "total_allocated_amount": total_allocated
     }
 
-
-# for return request
 @frappe.whitelist(allow_guest=False)
 def save_fcm_token(fcm_token):
     employee = frappe.session.user
@@ -1028,7 +971,6 @@ def save_fcm_token(fcm_token):
     })
     doc.insert(ignore_permissions=True)
     return {"status": "success", "message": "Token saved"}
-
 
 @frappe.whitelist(methods=["POST"])
 def location_entry():
@@ -1049,24 +991,20 @@ def location_entry():
         }
 
     try:
-        # Step 1: Check if parent log already exists
         log_name = frappe.db.get_value("Employee Location Log", {
             "employee_id": employee_id,
             "date": date
         }, "name")
 
         if log_name:
-            # Step 2: Add entry to existing log
             doc = frappe.get_doc("Employee Location Log", log_name)
         else:
-            # Step 3: Create new log
             doc = frappe.new_doc("Employee Location Log")
             doc.employee_id = employee_id
             doc.employee_name = employee_name
             doc.date = date
             doc.insert()
 
-        # Step 4: Append location to child table
         doc.append("employee_location_entry", {
             "time": time,
             "longitude": longitude,
@@ -1089,14 +1027,11 @@ def location_entry():
             "message": f"An error occurred: {str(e)}",
             "code": 500
         }
-    
-
 
 @frappe.whitelist(methods=["POST"])
 def create_location_log():
     data = frappe.request.get_json()
     employee_id = data.get("employee_id")
-    print("employeee_id",employee_id)
     employee_name = data.get("employee_name")
     date = data.get("date")
 
@@ -1127,6 +1062,7 @@ def create_location_log():
         "empl_id":doc.employee_id ,
         "empl_name": doc.employee_name
     }
+
 @frappe.whitelist(methods=["POST"])
 def append_location_entry():
     data = frappe.request.get_json()
@@ -1175,7 +1111,7 @@ def append_location_entry():
 @frappe.whitelist(methods=["POST"])
 def save_salesperson_location_log():
     data = frappe.request.get_json()
-    salesperson_id = data.get("sales_person_id")  # Now expect this field directly
+    salesperson_id = data.get("sales_person_id")
     date = data.get("date")
     entries = data.get("entries", [])
 
@@ -1186,7 +1122,6 @@ def save_salesperson_location_log():
             "code": 400
         }
 
-    # 🔍 Check for existing log by sales_person_id and date
     log_name = frappe.db.get_value("Employee Location Log", {
         "employee": salesperson_id,
         "date": date
@@ -1201,8 +1136,6 @@ def save_salesperson_location_log():
         doc.date = date
         new_log_created = True
 
-    # ➕ Append valid entries
-   # ➕ Append valid entries
     added = 0
     for entry in entries:
         if "time" in entry and "latitude" in entry and "longitude" in entry:
@@ -1210,10 +1143,9 @@ def save_salesperson_location_log():
                 "time": entry["time"],
                 "latitude": entry["latitude"],
                 "longitude": entry["longitude"],
-                "entry_type": entry.get("entry_type", "Track")  # Default to 'Track' if not provided
+                "entry_type": entry.get("entry_type", "Track")
             })
             added += 1
-
 
     doc.save(ignore_permissions=True)
     frappe.db.commit()
@@ -1225,11 +1157,8 @@ def save_salesperson_location_log():
         "sales_person_id": salesperson_id
     }
 
-
-
 @frappe.whitelist(allow_guest=False)
 def log_customer_visit():
-    import json
     data = json.loads(frappe.request.data)
 
     required_fields = ["sales_person", "date", "time", "longitude", "latitude", "customer_name"]
@@ -1253,7 +1182,6 @@ def log_customer_visit():
         "name": doc.name
     }
 
-
 @frappe.whitelist(allow_guest=False)
 def get_all_sales_invoice_ids(sales_person=None):
     if not sales_person:
@@ -1269,12 +1197,9 @@ def get_all_sales_invoice_ids(sales_person=None):
         invoices = frappe.get_all(
             "Sales Invoice",
             filters=filters,
-            fields=["name", "customer", "outstanding_amount"],  # Added outstanding too for test
+            fields=["name", "customer", "outstanding_amount"],
             order_by="posting_date desc"
         )
-
-        # Debug log
-        frappe.logger().info({"api_result": invoices})
 
         return {
             "status": "success",
@@ -1292,14 +1217,11 @@ def get_all_sales_invoice_ids(sales_person=None):
             "data": None
         }
 
-
-
 @frappe.whitelist()
 def sales_invoice_detail_by_ids():
     try:
         invoice_id = frappe.form_dict.get("invoice_id")
 
-        # Check if invoice_id is provided
         if not invoice_id:
             return {
                 "status": "error",
@@ -1308,7 +1230,6 @@ def sales_invoice_detail_by_ids():
                 "data": None
             }
 
-        # Try to get the Sales Invoice
         try:
             invoice = frappe.get_doc("Sales Invoice", invoice_id)
         except frappe.DoesNotExistError:
@@ -1319,7 +1240,6 @@ def sales_invoice_detail_by_ids():
                 "data": None
             }
 
-        # Prepare data
         data = {
             "posting_date": invoice.posting_date,
             "customer": invoice.customer,
@@ -1335,7 +1255,6 @@ def sales_invoice_detail_by_ids():
             ]
         }
 
-        # Success response
         return {
             "status": "success",
             "code": 200,
@@ -1351,6 +1270,7 @@ def sales_invoice_detail_by_ids():
             "message": f"An unexpected error occurred: {str(e)}",
             "data": None
         }
+
 @frappe.whitelist()
 def get_location_update_interval():
     try:
@@ -1369,12 +1289,11 @@ def get_location_update_interval():
 
         }
 
-
 @frappe.whitelist()
 def get_item_tax():
     templates = frappe.get_all(
         "Item Tax Template",
-        fields=["name", "title", "gst_rate"]  # directly fetch gst_rate
+        fields=["name", "title", "gst_rate"]
     )
     
     result = []
@@ -1387,12 +1306,8 @@ def get_item_tax():
     
     return result
 
-
-
 @frappe.whitelist()
 def create_sales_return():
-    import frappe
-    from frappe.utils import flt
     from collections import defaultdict
 
     data = frappe.request.get_json()
@@ -1413,12 +1328,10 @@ def create_sales_return():
     sales_return.custom_sales_person = data.get("sales_person")
     sales_return.custom_return_reason = data.get("return_reason")
 
-    # CASE 1: Return against existing Sales Invoice
     if data.get("return_against"):
         sales_return.return_against = data.get("return_against")
         orig_inv = frappe.get_doc("Sales Invoice", data.get("return_against"))
 
-        # ---- Copy taxes from original invoice ----
         if orig_inv.taxes_and_charges:
             sales_return.taxes_and_charges = orig_inv.taxes_and_charges
             for t in orig_inv.taxes:
@@ -1429,13 +1342,10 @@ def create_sales_return():
                     "description": t.description
                 })
 
-        # ---- Validate return quantities ----
-        # Build original sold qty map
         original_item_map = defaultdict(float)
         for it in orig_inv.items:
             original_item_map[it.item_code] += flt(it.qty)
 
-        # Get cumulative submitted returns
         submitted_returns = frappe.get_all(
             "Sales Invoice",
             filters={
@@ -1456,7 +1366,6 @@ def create_sales_return():
                 returned_item_map[r["item_code"]] += abs(flt(r["qty"]))
 
     else:
-        # CASE 2: No invoice → apply default company tax template
         tax_template = get_default_tax_template(company)
         if tax_template:
             sales_return.taxes_and_charges = tax_template
@@ -1468,13 +1377,11 @@ def create_sales_return():
             for t in taxes:
                 sales_return.append("taxes", t)
 
-    # ---- Add items with validation ----
     errors = []
     for item in data.get("items", []):
         qty = flt(item.get("qty"))
         item_code = item.get("item_code")
 
-        # If return against invoice, validate qty
         if data.get("return_against"):
             sold_qty = original_item_map.get(item_code, 0.0)
             already_returned = returned_item_map.get(item_code, 0.0)
@@ -1485,7 +1392,6 @@ def create_sales_return():
                     f"(sold {sold_qty} - already returned {already_returned})"
                 )
 
-        # Append negative qty for return
         sales_return.append("items", {
             "item_code": item_code,
             "qty": -abs(qty),
@@ -1496,13 +1402,11 @@ def create_sales_return():
     if errors:
         return {"status": "error", "message": errors}
 
-    # Save as Draft
     sales_return.run_method("set_other_charges")
     sales_return.run_method("set_missing_values")
     sales_return.run_method("calculate_taxes_and_totals")
     sales_return.save(ignore_permissions=True)
 
-    # Clear unwanted messages
     frappe.local.response["_server_messages"] = None
     frappe.clear_messages()
 
@@ -1511,7 +1415,6 @@ def create_sales_return():
         "sales_return": sales_return.name,
         "tax_template": sales_return.taxes_and_charges
     }
-
 
 @frappe.whitelist(allow_guest=True)
 def update_chundakadan_settings(enable_stock_validation):
@@ -1569,8 +1472,6 @@ def get_chundakadan_settings():
             "message": str(e),
             "http_status_code": 500
         }
-import frappe
-from bs4 import BeautifulSoup
 
 @frappe.whitelist(allow_guest=True)
 def get_task_details():
@@ -1592,7 +1493,6 @@ def get_task_details():
             filters={"custom_assigned_to":sa}
         )
 
-        # Strip HTML from description
         for d in docs:
             if d.get("description"):
                 soup = BeautifulSoup(d["description"], "html.parser")
@@ -1612,13 +1512,14 @@ def get_task_details():
             "message": str(e),
             "http_status_code": 500
         }
+
 @frappe.whitelist(allow_guest=True)
 def update_status():
     try:
         data = frappe.request.get_json()
         task_name = data.get("task_name")
         new_status = data.get("status")
-        completion_date = data.get("completion_date")  # get from request
+        completion_date = data.get("completion_date")
 
         if not task_name or not new_status:
             return {
@@ -1627,7 +1528,6 @@ def update_status():
                 "code": 400
             }
 
-        # If status is Completed → completion_date is mandatory
         if new_status == "Completed":
             if not completion_date:
                 return {
@@ -1639,7 +1539,6 @@ def update_status():
         task = frappe.get_doc("Task", task_name)
         task.status = new_status
 
-        # Save completion_date if provided
         if new_status == "Completed" and completion_date:
             task.completed_on = completion_date
 
@@ -1682,5 +1581,3 @@ def add_remarks():
             "message": str(e),
             "code": 500
         }
-
-    
