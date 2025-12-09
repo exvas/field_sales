@@ -137,6 +137,17 @@ app_license = "mit"
 # ---------------
 # Hook on document methods and events
 
+
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [
+            [
+                "module", "=", "Field Sales"
+            ]
+        ]
+    }
+]
 # doc_events = {
 # 	"*": {
 # 		"on_update": "method",
