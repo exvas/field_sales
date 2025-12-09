@@ -1836,7 +1836,7 @@ def get_customers():
 
 
 # ==========================================
-#  ✅ CORRECTED FUNCTION
+#  🚀 FINAL FIXED FUNCTION WITH STOCK IGNORE
 # ==========================================
 @frappe.whitelist(methods=["POST"])
 def create_sales_order():
@@ -1853,36 +1853,29 @@ def create_sales_order():
         if not items or not isinstance(items, list):
             return {"status": "error", "message": "At least one item is required", "code": 400}
 
-        # ✅ Check if customer exists
         if not frappe.db.exists("Customer", customer):
             return {"status": "error", "message": f"Customer '{customer}' does not exist.", "code": 404}
 
-        # ✅ Fetch a company dynamically
         company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
 
-        # ✅ Fetch default Sales Taxes and Charges Template
         tax_template = frappe.db.get_value(
             "Sales Taxes and Charges Template",
             {"is_default": 1, "company": company_name},
             "name"
         )
 
-        # Fallback if no default is set
         if not tax_template:
             fallback_template = "Output GST In-state"
             if frappe.db.exists("Sales Taxes and Charges Template", fallback_template):
                 tax_template = fallback_template
 
-        # ✅ Read setting from Chundakkadan Settings
         enable_stock_validation = frappe.db.get_single_value(
             "Chundakadan Settings", "enable_stock_validation"
         )
 
-        # ✅ Prepare insufficient stock list
         insufficient_items = []
 
-        # ✅ Initialize Sales Order document
         so = frappe.get_doc({
             "doctype": "Sales Order",
             "customer": customer,
@@ -1891,71 +1884,47 @@ def create_sales_order():
             "custom_sales_person": data.get("sales_person"),
             "delivery_date": data.get("delivery_date") or nowdate(),
             "transaction_date": data.get("transaction_date") or nowdate(),
-            # ✅ LOGIC ADDED: Reverse logic for special order
-            # If stock validation is enabled (1), special_order is 0
-            # If stock validation is disabled (0), special_order is 1
             "custom_special_order": 0 if enable_stock_validation else 1,
             "items": []
         })
 
-        # ✅ Process Items
+        # ==========================================================
+        #  ITEM PROCESSING & STOCK VALIDATION
+        # ==========================================================
         for item in items:
             item_code = item.get("item_code")
             req_qty = flt(item.get("qty", 1))
-            
-            # Logic to find the correct warehouse
-            warehouse = item.get("warehouse") 
-            
-            # 1. Try Item Defaults (Company specific)
-            if not warehouse:
-                warehouse = frappe.db.get_value("Item Default", {"parent": item_code, "company": company_name}, "default_warehouse")
-            
-            # 2. Try Item Master default
-            if not warehouse:
-                warehouse = frappe.db.get_value("Item", item_code, "default_warehouse")
+
+            warehouse = item.get("warehouse") or \
+                        frappe.db.get_value("Item Default", {"parent": item_code, "company": company_name}, "default_warehouse") or \
+                        frappe.db.get_value("Item", item_code, "default_warehouse")
 
             if not warehouse:
                 return {"status": "error", "message": f"Warehouse not specified for item {item_code}", "code": 400}
 
-            # ✅ Validate stock availability only if setting is enabled
+            # ❗ Only validate when enabled (true)
             if enable_stock_validation:
-                available_qty = flt(
-                    frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty") or 0
-                )
-
+                available_qty = flt(frappe.db.get_value("Bin", {"item_code": item_code, "warehouse": warehouse}, "actual_qty") or 0)
                 if req_qty > available_qty:
                     insufficient_items.append(
-                        f"Insufficient stock: Item {item_code} - only {available_qty} in stock in warehouse {warehouse}, but {req_qty} requested."
+                        f"Insufficient stock: Item {item_code} - only {available_qty} available, but {req_qty} requested."
                     )
 
-            # ✅ Append item with BOTH price_list_rate AND rate to prevent NoneType error
             so.append("items", {
                 "item_code": item_code,
                 "warehouse": warehouse,
                 "qty": req_qty,
-                "description": item.get("description", ""),
-                "discount_amount": flt(item.get("discount_amount", 0.0)),
-                "price_list_rate": flt(item.get("rate", 0.0)), 
-                "rate": flt(item.get("rate", 0.0)),
+                "price_list_rate": flt(item.get("rate", 0)),
+                "rate": flt(item.get("rate", 0)),
+                "discount_amount": flt(item.get("discount_amount", 0)),
             })
 
-        # ✅ Stop if any stock issues found
-        if insufficient_items:
-            if len(insufficient_items) == 1:
-                return {
-                    "status": "error",
-                    "message": f"Insufficient stock: {insufficient_items[0]}",
-                    "code": 400
-                }
-            else:
-                return {
-                    "status": "error",
-                    "message": insufficient_items,
-                    "code": 400
-                }
+        if enable_stock_validation and insufficient_items:
+            return {"status": "error", "message": insufficient_items, "code": 400}
 
-        # ✅ Apply Taxes & Calculations
-        # We call set_missing_values first to populate UOMs and conversion factors
+        # ==========================================================
+        #  TAX & TOTALS
+        # ==========================================================
         so.run_method("set_missing_values")
 
         if tax_template:
@@ -1965,27 +1934,37 @@ def create_sales_order():
         so.run_method("set_other_charges")
         so.run_method("calculate_taxes_and_totals")
 
-        # ✅ Insert and Submit
-        so.insert()
-        so.submit()
+        # ==========================================================
+        #  🚨 CORE FIX: OVERRIDE ERPNext STOCK CHECKS
+        # ==========================================================
+        if not enable_stock_validation:
+            # FORCE ALLOW ZERO / NEGATIVE STOCK
+            so.flags.ignore_stock_validation = True
+            so.flags.ignore_validate_update_after_submit = True
+            so.flags.ignore_mandatory = True
+            so.skip_stock_validation = 1
+        else:
+            so.skip_stock_validation = 0
 
-        response_data = {
-            "sales_order_id": so.name,
-            "delivery_date": so.delivery_date,
-            "customer": customer,
-            "company": so.company,
-            "items": items,
-            "taxes_and_charges": so.taxes_and_charges,
-            "total": so.total,
-            "grand_total": so.grand_total,
-            "status": so.status,
-            "custom_special_order": so.custom_special_order
-        }
+        # ==========================================================
+        #  SAVE DOCUMENT
+        # ==========================================================
+        so.insert(ignore_permissions=True)
+        so.submit()
 
         return {
             "status": "success",
             "message": "Sales Order created successfully",
-            "data": response_data,
+            "data": {
+                "sales_order_id": so.name,
+                "delivery_date": so.delivery_date,
+                "customer": customer,
+                "company": so.company,
+                "items": items,
+                "total": so.total,
+                "grand_total": so.grand_total,
+                "custom_special_order": so.custom_special_order
+            },
             "code": 201
         }
 
