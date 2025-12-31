@@ -1798,6 +1798,19 @@ def get_items(price_list="Standard Selling"):
             fieldname="item_tax_template"
         )
 
+        # Get stock across all warehouses
+        stock_data = frappe.db.sql("""
+            SELECT 
+                warehouse,
+                actual_qty
+            FROM `tabBin`
+            WHERE item_code = %s
+            ORDER BY warehouse
+        """, (item.name,), as_dict=True)
+
+        # Calculate total stock
+        total_stock = sum([s.actual_qty for s in stock_data]) if stock_data else 0
+
         result.append({
             "item_code": item.name,
             "item_name": item.item_name,
@@ -1805,11 +1818,14 @@ def get_items(price_list="Standard Selling"):
             "uom": item.stock_uom,
             "price": price or 0.0,
             "maintain_stock": item.is_stock_item,
-            "tax_template": tax_template or ""
+            "tax_template": tax_template or "",
+            "total_stock": total_stock,
+            "stock_by_warehouse": stock_data  # Detailed stock per warehouse
         })
 
     return result
 
+    
 @frappe.whitelist()
 def get_customers():
     customers = frappe.get_all(
