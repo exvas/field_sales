@@ -3150,3 +3150,146 @@ def add_remarks():
             "message": str(e),
             "code": 500
         }
+
+
+
+
+@frappe.whitelist(allow_guest=True)
+def get_item_stock():
+    try:
+        data = frappe.request.get_json()
+        item_code = data.get("item_code")
+        warehouse = data.get("warehouse")  # Optional filter
+        
+        # Base query
+        filters = {}
+        if item_code:
+            filters["item_code"] = item_code
+        if warehouse:
+            filters["warehouse"] = warehouse
+        
+        # Get stock data from Bin doctype
+        stock_data = frappe.get_all(
+            "Bin",
+            filters=filters,
+            fields=[
+                "item_code",
+                "warehouse",
+                "actual_qty",
+                "reserved_qty",
+                "ordered_qty",
+                "indented_qty",
+                "planned_qty",
+                "projected_qty",
+                "valuation_rate",
+                "stock_value"
+            ]
+        )
+        
+        # If you want item details too
+        if stock_data:
+            for stock in stock_data:
+                item = frappe.get_cached_value(
+                    "Item",
+                    stock["item_code"],
+                    ["item_name", "stock_uom", "item_group"],
+                    as_dict=True
+                )
+                stock.update(item)
+        
+        return {
+            "status": "success",
+            "message": f"Retrieved stock for {len(stock_data)} items",
+            "data": stock_data,
+            "code": 200
+        }
+        
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Get Item Stock Error")
+        return {
+            "status": "error",
+            "message": str(e),
+            "code": 500
+        }
+
+
+# Alternative: Get stock for all items (no filters)
+@frappe.whitelist(allow_guest=True)
+def get_all_items_stock():
+    try:
+        # Get all items with their stock (including zero stock)
+        stock_data = frappe.db.sql("""
+            SELECT 
+                i.name as item_code,
+                i.item_name,
+                i.stock_uom,
+                i.item_group,
+                COALESCE(b.warehouse, '') as warehouse,
+                COALESCE(b.actual_qty, 0) as actual_qty
+            FROM `tabItem` i
+            LEFT JOIN `tabBin` b ON i.name = b.item_code
+            WHERE i.disabled = 0
+            ORDER BY i.item_code, b.warehouse
+        """, as_dict=True)
+        
+        return {
+            "status": "success",
+            "message": f"Retrieved stock for {len(stock_data)} items",
+            "data": stock_data,
+            "code": 200
+        }
+        
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Get All Items Stock Error")
+        return {
+            "status": "error",
+            "message": str(e),
+            "code": 500
+        }
+# Get stock summary grouped by item
+@frappe.whitelist(allow_guest=True)
+def get_item_stock_summary():
+    try:
+        data = frappe.request.get_json()
+        item_code = data.get("item_code")
+        
+        filters = {"actual_qty": [">", 0]}
+        if item_code:
+            filters["item_code"] = item_code
+        
+        # Get summarized stock
+        stock_summary = frappe.db.sql("""
+            SELECT 
+                b.item_code,
+                i.item_name,
+                i.stock_uom,
+                SUM(b.actual_qty) as total_qty,
+                SUM(b.reserved_qty) as total_reserved,
+                SUM(b.projected_qty) as total_available,
+                COUNT(DISTINCT b.warehouse) as warehouse_count,
+                GROUP_CONCAT(DISTINCT b.warehouse) as warehouses
+            FROM `tabBin` b
+            INNER JOIN `tabItem` i ON b.item_code = i.name
+            {condition}
+            GROUP BY b.item_code
+            ORDER BY b.item_code
+        """.format(
+            condition=f"WHERE b.item_code = '{item_code}'" if item_code else "WHERE b.actual_qty > 0"
+        ), as_dict=True)
+        
+        return {
+            "status": "success",
+            "message": f"Retrieved stock summary for {len(stock_summary)} items",
+            "data": stock_summary,
+            "code": 200
+        }
+        
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Get Item Stock Summary Error")
+        return {
+            "status": "error",
+            "message": str(e),
+            "code": 500
+        }        
+
+        
