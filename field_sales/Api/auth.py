@@ -3558,22 +3558,47 @@ def get_quotations_with_details(sales_person_id=None, status_filter=None):
         if status_filter and status_filter not in valid_statuses:
             return response(f"Invalid status_filter. Allowed: {sorted(valid_statuses)}", None, False, 400)
 
-        # Filter Quotations whose Sales Team child contains the sales person
+        # This bench's Quotation DocType has no `sales_team` child table; it
+        # uses a `custom_sales_person` Link field (same as Sales Order). Probe
+        # the meta and pick whichever filter the schema actually supports.
         if effective_sp:
-            quotation_names = frappe.db.sql_list(
-                """
-                SELECT DISTINCT q.name
-                FROM `tabQuotation` q
-                INNER JOIN `tabSales Team` st
-                    ON st.parent = q.name AND st.parenttype = 'Quotation'
-                WHERE st.sales_person = %(sp)s
-                {status_clause}
-                ORDER BY q.modified DESC
-                """.format(
-                    status_clause="AND q.status = %(status)s" if status_filter else ""
-                ),
-                {"sp": effective_sp, "status": status_filter}
-            )
+            quotation_meta = frappe.get_meta("Quotation")
+            has_custom_sp = quotation_meta.get_field("custom_sales_person") is not None
+            has_sales_team = quotation_meta.get_field("sales_team") is not None
+
+            if has_custom_sp:
+                filters = {"custom_sales_person": effective_sp}
+                if status_filter:
+                    filters["status"] = status_filter
+                quotation_names = frappe.get_all(
+                    "Quotation",
+                    filters=filters,
+                    pluck="name",
+                    order_by="modified desc",
+                )
+            elif has_sales_team:
+                quotation_names = frappe.db.sql_list(
+                    """
+                    SELECT DISTINCT q.name
+                    FROM `tabQuotation` q
+                    INNER JOIN `tabSales Team` st
+                        ON st.parent = q.name AND st.parenttype = 'Quotation'
+                    WHERE st.sales_person = %(sp)s
+                    {status_clause}
+                    ORDER BY q.modified DESC
+                    """.format(
+                        status_clause="AND q.status = %(status)s" if status_filter else ""
+                    ),
+                    {"sp": effective_sp, "status": status_filter}
+                )
+            else:
+                # No way to scope by sales person; return everything for this caller.
+                filters = {}
+                if status_filter:
+                    filters["status"] = status_filter
+                quotation_names = frappe.get_all(
+                    "Quotation", filters=filters, pluck="name", order_by="modified desc"
+                )
         else:
             filters = {}
             if status_filter:
