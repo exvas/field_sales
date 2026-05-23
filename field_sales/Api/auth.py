@@ -2022,6 +2022,10 @@ def get_sales_orders_with_details(sales_person_id=None):
         sales_orders.append({
             "name": doc.name,
             "customer": doc.customer,
+            "customer_name": doc.customer_name,
+            "docstatus": doc.docstatus,
+            "custom_special_order": doc.get("custom_special_order") or 0,
+            "modified": str(doc.modified),
             "delivery_date": doc.delivery_date,
             "total": doc.total,
             "total_taxes_and_charges": doc.total_taxes_and_charges,
@@ -3379,6 +3383,10 @@ def update_sales_order(name=None, customer=None, delivery_date=None, items=None)
         doc.customer = customer
         doc.delivery_date = frappe.utils.getdate(delivery_date) if delivery_date else doc.delivery_date
 
+        # Persist Special Order toggle if the client sent it.
+        if "custom_special_order" in data:
+            doc.custom_special_order = 1 if data.get("custom_special_order") else 0
+
         # Replace items child table; keep sales team / custom_sales_person as-is
         doc.set("items", [])
         for item in items:
@@ -3906,6 +3914,74 @@ def get_print_formats(doctype=None):
         )
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.get_print_formats")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def cancel_sales_order(name=None):
+    """Cancel a Submitted Sales Order, but ONLY within 24 hours of submission.
+
+    Submission time is approximated by `doc.modified` — Frappe blocks edits on
+    docstatus=1, so `modified` stays at the moment of submit unless something
+    else explicitly bumps it. Good enough for a 24h grace window.
+    """
+    try:
+        from frappe.utils import now_datetime, get_datetime
+
+        data = frappe.request.get_json() or {}
+        so_name = name or data.get("name")
+        if not so_name:
+            return response("Sales Order name is required", None, False, 400)
+
+        doc = frappe.get_doc("Sales Order", so_name)
+
+        if doc.docstatus != 1:
+            return response(
+                "Only Submitted Sales Orders can be cancelled",
+                None,
+                False,
+                400,
+            )
+
+        submitted_at = get_datetime(doc.modified)
+        elapsed_hours = (now_datetime() - submitted_at).total_seconds() / 3600.0
+        if elapsed_hours > 24:
+            return response(
+                "Cancellation window expired (24 hours after submission)",
+                {"hours_since_submit": round(elapsed_hours, 2)},
+                False,
+                400,
+            )
+
+        caller_sp = _resolve_caller_sales_person()
+        if caller_sp and getattr(doc, "custom_sales_person", None):
+            if doc.custom_sales_person != caller_sp:
+                return response(
+                    "You do not have permission to cancel this order",
+                    None,
+                    False,
+                    403,
+                )
+
+        doc.cancel()
+        return response(
+            "Sales Order cancelled",
+            {"name": doc.name, "status": doc.status},
+            True,
+            200,
+        )
+    except frappe.DoesNotExistError:
+        return response("Sales Order not found", None, False, 404)
+    except frappe.LinkExistsError as e:
+        return response(
+            "Cannot cancel — this order has linked documents (invoices/deliveries). "
+            "Cancel those first.",
+            {"detail": str(e)},
+            False,
+            400,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.cancel_sales_order")
         return response(str(e), None, False, 500)
 
         
