@@ -8,7 +8,7 @@
   "channel": "Email",
   "message": "<p>A new customer feedback was received.</p>\n<ul>\n<li><b>Respondent:</b> {{ doc.respondent_name }}</li>\n<li><b>Shop:</b> {{ doc.shop_name }}</li>\n<li><b>Phone:</b> {{ doc.contact_number }}</li>\n<li><b>Feedback:</b> {{ doc.feedback }}</li>\n</ul>\n<p><a href=\"{{ frappe.utils.get_url() }}/app/customer-feedback/{{ doc.name }}\">Open in desk</a></p>",
   "send_to_all_assignees": 0,
-  "is_standard": 1,
+  "is_standard": 0,
   "module": "Field Sales",
   "recipients": [
    {"receiver_by_role": "System Manager"}
