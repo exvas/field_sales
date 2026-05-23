@@ -2011,7 +2011,7 @@ def get_sales_orders_with_details(sales_person_id=None):
         "Sales Order",
         filters={
             "custom_sales_person": sales_person_id,
-            "docstatus": 1
+            "docstatus": ["in", [0, 1]]
         },
         pluck="name"
     )
