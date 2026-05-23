@@ -3073,6 +3073,78 @@ def get_chundakadan_settings():
             "http_status_code": 500
         }
 
+@frappe.whitelist(methods=["POST"])
+def create_task(
+    subject=None,
+    custom_customer=None,
+    exp_start_date=None,
+    exp_end_date=None,
+    description=None,
+    custom_remarks=None,
+    custom_assigned_to=None,
+    status=None,
+):
+    """Create a Task for the calling sales person (or for an explicit
+    custom_assigned_to passed by the client). Mirrors the shape returned
+    by get_task_details so the mobile client can append the new row to
+    its in-memory list without a full refetch."""
+    try:
+        data = frappe.request.get_json() or {}
+        subject = subject or data.get("subject")
+        custom_customer = custom_customer or data.get("custom_customer")
+        exp_start_date = exp_start_date or data.get("exp_start_date")
+        exp_end_date = exp_end_date or data.get("exp_end_date")
+        description = description or data.get("description")
+        custom_remarks = custom_remarks or data.get("custom_remarks")
+        custom_assigned_to = custom_assigned_to or data.get("custom_assigned_to")
+        status = status or data.get("status") or "Open"
+
+        if not subject:
+            return {"status": "error", "message": "Subject is required", "code": 400}
+        if not exp_start_date or not exp_end_date:
+            return {"status": "error", "message": "Start and End dates are required", "code": 400}
+
+        # Default assignee = the calling user's sales person (matches
+        # get_task_details's filter on custom_assigned_to).
+        if not custom_assigned_to:
+            custom_assigned_to = _resolve_caller_sales_person()
+        if not custom_assigned_to:
+            return {"status": "error", "message": "custom_assigned_to could not be resolved", "code": 400}
+
+        doc = frappe.get_doc({
+            "doctype": "Task",
+            "subject": subject,
+            "status": status,
+            "exp_start_date": frappe.utils.getdate(exp_start_date),
+            "exp_end_date": frappe.utils.getdate(exp_end_date),
+            "description": description or "",
+            "custom_customer": custom_customer,
+            "custom_assigned_to": custom_assigned_to,
+            "custom_remarks": custom_remarks or "",
+        })
+        doc.insert(ignore_permissions=True)
+
+        return {
+            "status": "success",
+            "message": "Task created",
+            "data": {
+                "name": doc.name,
+                "subject": doc.subject,
+                "status": doc.status,
+                "custom_customer": doc.custom_customer,
+                "custom_assigned_to": doc.custom_assigned_to,
+                "exp_start_date": str(doc.exp_start_date) if doc.exp_start_date else None,
+                "exp_end_date": str(doc.exp_end_date) if doc.exp_end_date else None,
+                "description": doc.description or "",
+                "custom_remarks": doc.custom_remarks or "",
+            },
+            "code": 200,
+        }
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.create_task")
+        return {"status": "error", "message": str(e), "code": 500}
+
+
 @frappe.whitelist(allow_guest=True)
 def get_task_details():
     try:
