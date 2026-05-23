@@ -5,7 +5,8 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "enable_stock_validation"
+  "enable_stock_validation",
+  "default_company"
  ],
  "fields": [
   {
@@ -13,6 +14,13 @@
    "fieldname": "enable_stock_validation",
    "fieldtype": "Check",
    "label": "Enable Stock Validation For Mobile App"
+  },
+  {
+   "fieldname": "default_company",
+   "fieldtype": "Link",
+   "label": "Default Company for Mobile App",
+   "options": "Company",
+   "description": "Fallback company when the logged-in user's Employee record has no company set. Leave blank to use the first Company in the database."
   }
  ],
  "grid_page_length": 50,

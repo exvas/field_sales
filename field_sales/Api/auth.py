@@ -273,7 +273,7 @@
 #             return {"status": "error", "message": f"Customer '{customer}' does not exist.", "code": 404}
 
 #         # ✅ Fetch a company dynamically
-#         company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
+#         company_name = _resolve_company_for_caller()
 #         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
 
 #         # ✅ Fetch default Sales Taxes and Charges Template
@@ -1873,7 +1873,7 @@ def create_sales_order():
         if not frappe.db.exists("Customer", customer):
             return {"status": "error", "message": f"Customer '{customer}' does not exist.", "code": 404}
 
-        company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
+        company_name = _resolve_company_for_caller()
         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
 
         tax_template = frappe.db.get_value(
@@ -3426,6 +3426,35 @@ def _resolve_caller_sales_person():
     return sales_person
 
 
+def _resolve_company_for_caller():
+    """3-layer fallback for the calling user's company.
+
+    1. Employee.company linked to frappe.session.user
+    2. Chundakadan Settings.default_company
+    3. First Company in the DB
+
+    Returns the company name string. Never None unless the bench has
+    zero Companies (in which case ERPNext is misconfigured).
+    """
+    user = frappe.session.user
+    if user and user != "Guest":
+        emp_company = frappe.db.get_value("Employee", {"user_id": user}, "company")
+        if emp_company:
+            return emp_company
+
+    try:
+        settings_default = frappe.db.get_single_value(
+            "Chundakadan Settings", "default_company"
+        )
+        if settings_default:
+            return settings_default
+    except Exception:
+        pass
+
+    rows = frappe.get_all("Company", fields=["name"], limit=1)
+    return rows[0].name if rows else None
+
+
 def _maybe_log_visit(doc, latitude, longitude, source_label):
     """Best-effort auto-log of a Customer Visit Log row tied to `doc`.
 
@@ -3664,7 +3693,7 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
         if not frappe.db.exists("Customer", customer):
             return response(f"Customer '{customer}' does not exist", None, False, 404)
 
-        company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
+        company_name = _resolve_company_for_caller()
         default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
 
         caller_sp = _resolve_caller_sales_person()
@@ -4271,6 +4300,42 @@ def cancel_sales_order(name=None):
         )
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.cancel_sales_order")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_active_company():
+    """Return the company the calling user's create actions will be billed to.
+
+    Mirrors `_resolve_company_for_caller` and adds the human-readable
+    company name + currency so the mobile home screen can display
+    "Welcome, Fanseem P / Chundakadan Agencies" without a second lookup.
+    """
+    try:
+        company = _resolve_company_for_caller()
+        if not company:
+            return response("No company configured", None, False, 404)
+
+        details = frappe.db.get_value(
+            "Company",
+            company,
+            ["name", "company_name", "default_currency", "country"],
+            as_dict=True,
+        ) or {"name": company, "company_name": company}
+
+        return response(
+            "Active company resolved",
+            {
+                "name": details.get("name"),
+                "company_name": details.get("company_name") or details.get("name"),
+                "default_currency": details.get("default_currency"),
+                "country": details.get("country"),
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_active_company")
         return response(str(e), None, False, 500)
 
         
