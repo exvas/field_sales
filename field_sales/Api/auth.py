@@ -2023,6 +2023,7 @@ def get_sales_orders_with_details(sales_person_id=None):
             "name": doc.name,
             "customer": doc.customer,
             "customer_name": doc.customer_name,
+            "status": doc.status,
             "docstatus": doc.docstatus,
             "custom_special_order": doc.get("custom_special_order") or 0,
             "modified": str(doc.modified),
