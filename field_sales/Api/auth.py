@@ -3515,13 +3515,25 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
 
         caller_sp = _resolve_caller_sales_person()
 
+        # Resolve a selling price list (Customer default -> Selling Settings -> "Standard Selling").
+        # Without this, ERPNext's calculate_taxes_and_totals can throw
+        # "'NoneType' object has no attribute 'options'" when looking up price_list_currency.
+        selling_price_list = (
+            frappe.db.get_value("Customer", customer, "default_price_list")
+            or frappe.db.get_single_value("Selling Settings", "selling_price_list")
+            or "Standard Selling"
+        )
+
         q = frappe.get_doc({
             "doctype": "Quotation",
             "quotation_to": "Customer",
             "party_name": customer,
-            "customer": customer,
             "company": company_name,
             "currency": data.get("currency") or default_currency,
+            "selling_price_list": selling_price_list,
+            "price_list_currency": default_currency,
+            "plc_conversion_rate": 1,
+            "conversion_rate": 1,
             "transaction_date": frappe.utils.getdate(transaction_date) if transaction_date else nowdate(),
             "valid_till": frappe.utils.getdate(valid_till) if valid_till else None,
             "items": []
@@ -3547,9 +3559,14 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
                 "allocated_percentage": 100,
             })
 
+        # Mirror create_sales_order's defensive flags so hook misses don't blow up the request.
+        q.flags.ignore_mandatory = True
+        q.flags.ignore_validate_update_after_submit = True
+
         q.run_method("set_missing_values")
+        q.run_method("calculate_taxes_and_totals")
         # india_compliance hooks compute GST on insert; no manual tax logic
-        q.insert()
+        q.insert(ignore_permissions=True)
 
         submit_flag = data.get("submit", False)
         if isinstance(submit_flag, str):
