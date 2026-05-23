@@ -1966,7 +1966,16 @@ def create_sales_order():
         #  SAVE DOCUMENT
         # ==========================================================
         so.insert(ignore_permissions=True)
-        so.submit()
+
+        # `submit` may arrive as bool, "true"/"false", or 0/1 from the mobile client.
+        submit_flag = data.get("submit", True)
+        if isinstance(submit_flag, str):
+            submit_flag = submit_flag.lower() not in ("false", "0", "no")
+        else:
+            submit_flag = bool(submit_flag)
+
+        if submit_flag:
+            so.submit()
 
         return {
             "status": "success",
@@ -3541,7 +3550,21 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
         # india_compliance hooks compute GST on insert; no manual tax logic
         q.insert()
 
-        return response("Quotation created", {"name": q.name}, True, 200)
+        submit_flag = data.get("submit", False)
+        if isinstance(submit_flag, str):
+            submit_flag = submit_flag.lower() not in ("false", "0", "no")
+        else:
+            submit_flag = bool(submit_flag)
+
+        if submit_flag:
+            q.submit()
+
+        return response(
+            "Quotation created",
+            {"name": q.name, "docstatus": q.docstatus, "status": q.status},
+            True,
+            200,
+        )
 
     except frappe.PermissionError:
         frappe.log_error(frappe.get_traceback(), "field_sales.create_quotation")
@@ -3712,6 +3735,51 @@ def convert_quotation_to_sales_order(quotation_name=None, delivery_date=None):
         return response("Quotation not found", None, False, 404)
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.convert_quotation_to_sales_order")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def submit_sales_order(name=None):
+    """Submit a Draft Sales Order (docstatus 0 -> 1). Used by the mobile app
+    after a sales person has edited a Draft created via create_sales_order
+    with submit=false."""
+    try:
+        data = frappe.request.get_json() or {}
+        so_name = name or data.get("name")
+        if not so_name:
+            return response("Sales Order name is required", None, False, 400)
+
+        doc = frappe.get_doc("Sales Order", so_name)
+
+        if doc.docstatus != 0:
+            return response(
+                "Only Draft Sales Orders can be submitted",
+                None,
+                False,
+                400,
+            )
+
+        caller_sp = _resolve_caller_sales_person()
+        if caller_sp and getattr(doc, "custom_sales_person", None):
+            if doc.custom_sales_person != caller_sp:
+                return response(
+                    "You do not have permission to submit this order",
+                    None,
+                    False,
+                    403,
+                )
+
+        doc.submit()
+        return response(
+            "Sales Order submitted",
+            {"name": doc.name, "status": doc.status},
+            True,
+            200,
+        )
+    except frappe.DoesNotExistError:
+        return response("Sales Order not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.submit_sales_order")
         return response(str(e), None, False, 500)
 
         
