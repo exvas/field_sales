@@ -1,0 +1,95 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:CF-.YYYY.-.#####",
+ "creation": "2026-05-23 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "respondent_name",
+  "shop_name",
+  "contact_number",
+  "feedback",
+  "attachment",
+  "honeypot",
+  "submitted_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "respondent_name",
+   "fieldtype": "Data",
+   "label": "Respondent Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "shop_name",
+   "fieldtype": "Data",
+   "label": "Shop Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "contact_number",
+   "fieldtype": "Data",
+   "label": "Contact Number",
+   "reqd": 1
+  },
+  {
+   "fieldname": "feedback",
+   "fieldtype": "Long Text",
+   "label": "Feedback",
+   "reqd": 1
+  },
+  {
+   "fieldname": "attachment",
+   "fieldtype": "Attach",
+   "label": "Attachment"
+  },
+  {
+   "fieldname": "honeypot",
+   "fieldtype": "Data",
+   "label": "hp",
+   "hidden": 1,
+   "no_copy": 1
+  },
+  {
+   "fieldname": "submitted_at",
+   "fieldtype": "Datetime",
+   "label": "Submitted At",
+   "default": "now",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-05-23 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Field Sales",
+ "name": "Customer Feedback",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "import": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "role": "Guest"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "submitted_at",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "shop_name"
+}

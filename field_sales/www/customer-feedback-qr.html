@@ -1,0 +1,11 @@
+{% extends "templates/web.html" %}
+{% block page_content %}
+<div style="max-width:600px;margin:60px auto;text-align:center;font-family:system-ui,sans-serif;">
+  <h1 style="margin-bottom:8px;">Customer Feedback</h1>
+  <p style="color:#6b6b6b;margin-bottom:32px;">Scan to share your experience.</p>
+  <img src="data:image/png;base64,{{ qr_base64 }}" alt="QR code" style="width:320px;height:320px;border:1px solid #eee;padding:12px;background:#fff;border-radius:8px;"/>
+  <p style="margin-top:24px;font-size:13px;color:#888;word-break:break-all;">{{ feedback_url }}</p>
+  <p style="margin-top:32px;"><button onclick="window.print()" style="padding:10px 24px;border:1px solid #c8102e;background:#c8102e;color:white;border-radius:6px;cursor:pointer;font-weight:600;">Print this page</button></p>
+</div>
+<style>@media print { button { display: none !important; } }</style>
+{% endblock %}

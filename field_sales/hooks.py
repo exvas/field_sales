@@ -146,6 +146,14 @@ fixtures = [
                 "module", "=", "Field Sales"
             ]
         ]
+    },
+    {
+        "dt": "Notification",
+        "filters": [
+            [
+                "module", "=", "Field Sales"
+            ]
+        ]
     }
 ]
 # doc_events = {
