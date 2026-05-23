@@ -2041,9 +2041,11 @@ def get_sales_orders_with_details(sales_person_id=None):
             "items": [
                 {
                     "item_code": item.item_code,
+                    "item_name": item.item_name,
                     "qty": item.qty,
                     "rate": item.rate,
-                    "amount": item.amount
+                    "amount": item.amount,
+                    "uom": item.uom
                 } for item in doc.items
             ]
         })
@@ -3672,15 +3674,23 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
                 row["uom"] = item.get("uom")
             q.append("items", row)
 
+        # Attach the calling sales person. This bench's Quotation does NOT
+        # have the standard ERPNext `sales_team` child table — it uses a
+        # custom_sales_person Link field, same pattern as create_sales_order.
+        # Probe the meta to pick whichever the DocType actually has and skip
+        # silently if neither exists.
         if caller_sp:
-            q.append("sales_team", {
-                "sales_person": caller_sp,
-                "allocated_percentage": 100,
-            })
+            quotation_meta = frappe.get_meta("Quotation")
+            if quotation_meta.get_field("sales_team"):
+                q.append("sales_team", {
+                    "sales_person": caller_sp,
+                    "allocated_percentage": 100,
+                })
+            elif quotation_meta.get_field("custom_sales_person"):
+                q.custom_sales_person = caller_sp
 
-        # Match the working create_sales_order pattern exactly: just one
-        # set_missing_values call + insert. No manual calculate_taxes_and_totals
-        # before insert — that's where 'NoneType options' was triggering.
+        # Match the working create_sales_order pattern: one set_missing_values
+        # + insert. Skip explicit calculate_taxes_and_totals beforehand.
         q.flags.ignore_mandatory = True
         q.run_method("set_missing_values")
         q.insert(ignore_permissions=True)
