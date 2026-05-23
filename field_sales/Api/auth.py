@@ -3642,25 +3642,17 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
 
         caller_sp = _resolve_caller_sales_person()
 
-        # Resolve a selling price list (Customer default -> Selling Settings -> "Standard Selling").
-        # Without this, ERPNext's calculate_taxes_and_totals can throw
-        # "'NoneType' object has no attribute 'options'" when looking up price_list_currency.
-        selling_price_list = (
-            frappe.db.get_value("Customer", customer, "default_price_list")
-            or frappe.db.get_single_value("Selling Settings", "selling_price_list")
-            or "Standard Selling"
-        )
-
+        # Minimal doc shape — let ERPNext's set_missing_values resolve
+        # selling_price_list / currency from Customer + Company defaults.
+        # An over-defensive earlier draft set those explicitly and could
+        # itself trigger the "'NoneType' object has no attribute 'options'"
+        # if the chosen price list was stale.
         q = frappe.get_doc({
             "doctype": "Quotation",
             "quotation_to": "Customer",
             "party_name": customer,
             "company": company_name,
             "currency": data.get("currency") or default_currency,
-            "selling_price_list": selling_price_list,
-            "price_list_currency": default_currency,
-            "plc_conversion_rate": 1,
-            "conversion_rate": 1,
             "transaction_date": frappe.utils.getdate(transaction_date) if transaction_date else nowdate(),
             "valid_till": frappe.utils.getdate(valid_till) if valid_till else None,
             "items": []
@@ -3686,13 +3678,11 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
                 "allocated_percentage": 100,
             })
 
-        # Mirror create_sales_order's defensive flags so hook misses don't blow up the request.
+        # Match the working create_sales_order pattern exactly: just one
+        # set_missing_values call + insert. No manual calculate_taxes_and_totals
+        # before insert — that's where 'NoneType options' was triggering.
         q.flags.ignore_mandatory = True
-        q.flags.ignore_validate_update_after_submit = True
-
         q.run_method("set_missing_values")
-        q.run_method("calculate_taxes_and_totals")
-        # india_compliance hooks compute GST on insert; no manual tax logic
         q.insert(ignore_permissions=True)
 
         submit_flag = data.get("submit", False)
@@ -3721,8 +3711,43 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
         frappe.log_error(frappe.get_traceback(), "field_sales.create_quotation")
         return response("Permission denied", None, False, 403)
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "field_sales.create_quotation")
-        return response(str(e), None, False, 500)
+        tb = frappe.get_traceback()
+        frappe.log_error(tb, "field_sales.create_quotation")
+        # Surface the *deepest* useful frame so the mobile snackbar shows
+        # where it broke (file:line, calling function). Removes the
+        # "NoneType has no attribute 'options'" mystery in the field.
+        diag = _extract_last_frame(tb) or str(e)
+        return response("Create failed: {}".format(diag), None, False, 500)
+
+
+def _extract_last_frame(tb):
+    """Pull the deepest non-frappe-internal frame from a traceback string.
+
+    Returns 'path/file.py:LINENO in func: <exception msg>' or None.
+    Skips frames inside frappe's own client/handler shim so the caller
+    sees their own model/controller code's failure site, not the
+    request dispatcher.
+    """
+    try:
+        lines = [ln.rstrip() for ln in tb.splitlines() if ln.strip()]
+        # File frames look like:  File "/path/foo.py", line 123, in func
+        last_file = None
+        for ln in lines:
+            stripped = ln.strip()
+            if not stripped.startswith("File "):
+                continue
+            # Skip frappe handler/whitelist plumbing
+            if "/frappe/handler.py" in stripped:
+                continue
+            if "/frappe/api/" in stripped:
+                continue
+            last_file = stripped
+        final = lines[-1] if lines else ""
+        if last_file:
+            return "{} -> {}".format(last_file, final)
+        return final or None
+    except Exception:
+        return None
 
 
 @frappe.whitelist(methods=["POST"])
