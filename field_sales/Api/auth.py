@@ -1584,6 +1584,7 @@
 
 
 import json
+import base64
 import frappe
 from frappe import _
 from frappe.utils import now, nowdate, flt
@@ -3780,6 +3781,114 @@ def submit_sales_order(name=None):
         return response("Sales Order not found", None, False, 404)
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.submit_sales_order")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def get_print_pdf(doctype=None, name=None, print_format=None, letterhead=None):
+    """Generate a PDF (base64) or HTML fallback for a given doctype/name."""
+    try:
+        if not doctype or not name:
+            return response("doctype and name are required", None, False, 400)
+
+        if not frappe.db.exists(doctype, name):
+            return response(f"{doctype} {name} not found", None, False, 404)
+
+        if not print_format:
+            print_format = "Standard"
+
+        # Try PDF generation first (requires wkhtmltopdf)
+        try:
+            pdf_binary = frappe.get_print(
+                doctype,
+                name,
+                print_format=print_format,
+                letterhead=letterhead,
+                as_pdf=True,
+                ignore_permissions=True,
+            )
+            if not pdf_binary:
+                raise Exception("Empty PDF output")
+
+            pdf_b64 = base64.b64encode(pdf_binary).decode("utf-8")
+            return response(
+                "PDF generated",
+                {
+                    "pdf_base64": pdf_b64,
+                    "html": None,
+                    "content_type": "application/pdf",
+                },
+                True,
+                200,
+            )
+        except Exception:
+            # wkhtmltopdf missing or PDF generation failed — fall back to HTML
+            html_string = frappe.get_print(
+                doctype,
+                name,
+                print_format=print_format,
+                letterhead=letterhead,
+                ignore_permissions=True,
+            )
+            if not html_string:
+                return response("Failed to generate print content", None, False, 500)
+
+            return response(
+                "HTML fallback",
+                {
+                    "pdf_base64": None,
+                    "html": html_string,
+                    "content_type": "text/html",
+                },
+                True,
+                200,
+            )
+    except frappe.PermissionError:
+        return response("No permission to access this document", None, False, 403)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_print_pdf")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_print_formats(doctype=None):
+    """Return available Print Formats and Letter Heads for a doctype."""
+    try:
+        if not doctype:
+            return response("doctype is required", None, False, 400)
+
+        formats = frappe.get_all(
+            "Print Format",
+            filters={"doc_type": doctype, "disabled": 0},
+            fields=["name"],
+            order_by="name asc",
+        )
+
+        names = [pf.get("name") for pf in formats]
+        if "Standard" not in names:
+            formats.append({"name": "Standard"})
+
+        letterheads = frappe.get_all(
+            "Letter Head",
+            filters={"disabled": 0},
+            fields=["name", "is_default"],
+            order_by="is_default desc, name asc",
+        )
+
+        return response(
+            "Print formats fetched",
+            {
+                "print_formats": [{"name": pf.get("name")} for pf in formats],
+                "letterheads": [
+                    {"name": lh.get("name"), "is_default": lh.get("is_default")}
+                    for lh in letterheads
+                ],
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_print_formats")
         return response(str(e), None, False, 500)
 
         
