@@ -1779,19 +1779,49 @@ def get_items(price_list="Standard Selling"):
     items = frappe.get_all(
         "Item",
         filters={"disabled": 0},
-        fields=["name", "item_name", "description", "stock_uom", "is_stock_item"]
+        fields=[
+            "name", "item_name", "description", "stock_uom", "is_stock_item",
+            "standard_rate", "valuation_rate", "last_purchase_rate"
+        ]
     )
+
+    # Fallback selling price list (Selling Settings.selling_price_list)
+    fallback_pl = None
+    try:
+        fallback_pl = frappe.db.get_single_value(
+            "Selling Settings", "selling_price_list"
+        )
+    except Exception:
+        fallback_pl = None
 
     result = []
 
     for item in items:
-        # Get price from Item Price
+        # Price fetch order:
+        #   1. Item Price in the requested price_list (default "Standard Selling")
+        #   2. Item Price in Selling Settings' configured price list
+        #   3. Item.standard_rate (master field)
+        #   4. Item.last_purchase_rate
+        #   5. Item.valuation_rate
+        #   6. 0
         price = frappe.db.get_value(
             "Item Price",
             filters={"item_code": item.name, "price_list": price_list},
-            fieldname="price_list_rate"
+            fieldname="price_list_rate",
         )
-    
+        if not price and fallback_pl and fallback_pl != price_list:
+            price = frappe.db.get_value(
+                "Item Price",
+                filters={"item_code": item.name, "price_list": fallback_pl},
+                fieldname="price_list_rate",
+            )
+        if not price:
+            price = (
+                item.get("standard_rate")
+                or item.get("last_purchase_rate")
+                or item.get("valuation_rate")
+            )
+
         # Get tax template from Item Taxes table
         tax_template = frappe.db.get_value(
             "Item Tax",
@@ -3596,14 +3626,22 @@ def get_quotations_with_details(sales_person_id=None, status_filter=None):
             has_sales_team = quotation_meta.get_field("sales_team") is not None
 
             if has_custom_sp:
-                filters = {"custom_sales_person": effective_sp}
-                if status_filter:
-                    filters["status"] = status_filter
-                quotation_names = frappe.get_all(
-                    "Quotation",
-                    filters=filters,
-                    pluck="name",
-                    order_by="modified desc",
+                # Match the caller's quotations AND any orphans (custom_sales_person
+                # IS NULL / empty) — orphans happen when the field was added
+                # after some drafts already existed, or when an admin user
+                # creates a doc without an Employee record. Without the OR,
+                # those drafts vanish from the mobile list.
+                status_clause = "AND q.status = %(status)s" if status_filter else ""
+                quotation_names = frappe.db.sql_list(
+                    """
+                    SELECT q.name FROM `tabQuotation` q
+                    WHERE (q.custom_sales_person = %(sp)s
+                           OR q.custom_sales_person IS NULL
+                           OR q.custom_sales_person = '')
+                          {status_clause}
+                    ORDER BY q.modified DESC
+                    """.format(status_clause=status_clause),
+                    {"sp": effective_sp, "status": status_filter},
                 )
             elif has_sales_team:
                 quotation_names = frappe.db.sql_list(
