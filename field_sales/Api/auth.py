@@ -3917,6 +3917,98 @@ def get_print_formats(doctype=None):
         return response(str(e), None, False, 500)
 
 
+@frappe.whitelist()
+def get_today_snapshot(sales_person_id=None):
+    """Return today's headline counts for the Sales Person's home dashboard.
+
+    Resets naturally at midnight (filters use today's date). After a sales
+    person logs the next day's first activity, the tiles read fresh.
+    """
+    try:
+        from frappe.utils import today
+
+        caller_sp = _resolve_caller_sales_person()
+        sp = sales_person_id or caller_sp
+        if not sp:
+            return response("Sales person required", None, False, 400)
+        if caller_sp and sp != caller_sp:
+            return response("You can only view your own snapshot", None, False, 403)
+
+        today_str = today()
+
+        # Visits — Customer Visit Log rows for this sales person, dated today.
+        # Schema varies; query defensively via the table API.
+        visits = 0
+        try:
+            visits = frappe.db.count(
+                "Customer Visit Log",
+                filters={
+                    "sales_person": sp,
+                    "visit_date": today_str,
+                },
+            )
+        except Exception:
+            try:
+                # Fallback: parent log row created today
+                visits = frappe.db.count(
+                    "Customer Visit Log",
+                    filters={
+                        "sales_person": sp,
+                        "creation": [">=", today_str],
+                    },
+                )
+            except Exception:
+                visits = 0
+
+        # Orders — Sales Orders this sales person created today.
+        orders = frappe.db.count(
+            "Sales Order",
+            filters={
+                "custom_sales_person": sp,
+                "transaction_date": today_str,
+                "docstatus": ["in", [0, 1]],
+            },
+        )
+
+        # Collected — Payment Entries received today by this sales person.
+        # If Payment Entry doesn't link to sales_person directly in this
+        # app, fall back to 0.
+        collected = 0
+        try:
+            rows = frappe.db.sql(
+                """
+                SELECT SUM(paid_amount) FROM `tabPayment Entry`
+                WHERE docstatus = 1
+                  AND DATE(posting_date) = %(d)s
+                  AND (custom_sales_person = %(sp)s OR owner IN (
+                       SELECT user_id FROM `tabEmployee`
+                       WHERE name IN (
+                         SELECT employee FROM `tabSales Person` WHERE name = %(sp)s
+                       )
+                  ))
+                """,
+                {"d": today_str, "sp": sp},
+            )
+            collected = float(rows[0][0] or 0) if rows else 0
+        except Exception:
+            collected = 0
+
+        return response(
+            "Snapshot fetched",
+            {
+                "date": today_str,
+                "visits": visits,
+                "orders": orders,
+                "collected": collected,
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_today_snapshot")
+        return response(str(e), None, False, 500)
+
+
 @frappe.whitelist(methods=["POST"])
 def cancel_sales_order(name=None):
     """Cancel a Submitted Sales Order, but ONLY within 24 hours of submission.
