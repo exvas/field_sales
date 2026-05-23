@@ -3306,6 +3306,412 @@ def get_item_stock_summary():
             "status": "error",
             "message": str(e),
             "code": 500
-        }        
+        }
+
+
+# ==========================================================================
+#  Quotation & Sales Order extension endpoints
+#  - Append-only section.
+#  - india_compliance handles GST taxes on save/submit; no manual tax logic.
+# ==========================================================================
+
+def _resolve_caller_sales_person():
+    """Resolve the Sales Person linked to the current session user.
+
+    Returns the Sales Person name (string) or None if the caller is not
+    linked to a Sales Person via an Employee record.
+    """
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return None
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    if not employee:
+        return None
+    sales_person = frappe.db.get_value("Sales Person", {"employee": employee}, "name")
+    return sales_person
+
+
+@frappe.whitelist(methods=["POST"])
+def update_sales_order(name=None, customer=None, delivery_date=None, items=None):
+    """Update a Draft Sales Order. Submitted/cancelled SOs are rejected.
+
+    india_compliance recomputes taxes on save; we never touch the taxes table.
+    """
+    try:
+        data = frappe.request.get_json() or {}
+        name = name or data.get("name")
+        customer = customer or data.get("customer")
+        delivery_date = delivery_date or data.get("delivery_date")
+        items = items if items is not None else data.get("items")
+
+        if not name:
+            return response("Sales Order name is required", None, False, 400)
+        if not customer:
+            return response("Customer is required", None, False, 400)
+        if not items or not isinstance(items, list):
+            return response("At least one item is required", None, False, 400)
+
+        if not frappe.db.exists("Sales Order", name):
+            return response(f"Sales Order '{name}' does not exist", None, False, 404)
+        if not frappe.db.exists("Customer", customer):
+            return response(f"Customer '{customer}' does not exist", None, False, 404)
+
+        doc = frappe.get_doc("Sales Order", name)
+
+        if doc.docstatus != 0:
+            return response("Submitted orders cannot be edited", None, False, 400)
+
+        # Permission: caller must own this SO via custom_sales_person
+        caller_sp = _resolve_caller_sales_person()
+        if caller_sp and doc.get("custom_sales_person") and doc.custom_sales_person != caller_sp:
+            return response("You do not have permission to edit this Sales Order", None, False, 403)
+
+        doc.customer = customer
+        doc.delivery_date = frappe.utils.getdate(delivery_date) if delivery_date else doc.delivery_date
+
+        # Replace items child table; keep sales team / custom_sales_person as-is
+        doc.set("items", [])
+        for item in items:
+            item_code = item.get("item_code")
+            if not item_code:
+                return response("item_code is required for each item", None, False, 400)
+            row = {
+                "item_code": item_code,
+                "qty": flt(item.get("qty", 1)),
+                "rate": flt(item.get("rate", 0)),
+                "price_list_rate": flt(item.get("rate", 0)),
+            }
+            if item.get("uom"):
+                row["uom"] = item.get("uom")
+            if item.get("delivery_date"):
+                row["delivery_date"] = frappe.utils.getdate(item.get("delivery_date"))
+            doc.append("items", row)
+
+        # india_compliance recomputes taxes on save automatically
+        doc.save()
+
+        return response("Sales Order updated", {"name": doc.name}, True, 200)
+
+    except frappe.PermissionError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.update_sales_order")
+        return response("Permission denied", None, False, 403)
+    except frappe.DoesNotExistError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.update_sales_order")
+        return response("Sales Order not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.update_sales_order")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["GET"])
+def get_quotations_with_details(sales_person_id=None, status_filter=None):
+    """List Quotations filtered by sales person (via Sales Team child)
+    and optional status. Mirrors get_sales_orders_with_details.
+    """
+    try:
+        # Verify caller's own sales-person; do not trust raw sales_person_id
+        caller_sp = _resolve_caller_sales_person()
+        if sales_person_id and caller_sp and sales_person_id != caller_sp:
+            return response("You can only view your own quotations", None, False, 403)
+        effective_sp = sales_person_id or caller_sp
+
+        valid_statuses = {"Draft", "Submitted", "Open", "Lost", "Ordered", "Expired"}
+        if status_filter and status_filter not in valid_statuses:
+            return response(f"Invalid status_filter. Allowed: {sorted(valid_statuses)}", None, False, 400)
+
+        # Filter Quotations whose Sales Team child contains the sales person
+        if effective_sp:
+            quotation_names = frappe.db.sql_list(
+                """
+                SELECT DISTINCT q.name
+                FROM `tabQuotation` q
+                INNER JOIN `tabSales Team` st
+                    ON st.parent = q.name AND st.parenttype = 'Quotation'
+                WHERE st.sales_person = %(sp)s
+                {status_clause}
+                ORDER BY q.modified DESC
+                """.format(
+                    status_clause="AND q.status = %(status)s" if status_filter else ""
+                ),
+                {"sp": effective_sp, "status": status_filter}
+            )
+        else:
+            filters = {}
+            if status_filter:
+                filters["status"] = status_filter
+            quotation_names = frappe.get_all("Quotation", filters=filters, pluck="name", order_by="modified desc")
+
+        quotations = []
+        for q_name in quotation_names:
+            doc = frappe.get_doc("Quotation", q_name)
+            quotations.append({
+                "name": doc.name,
+                "customer": doc.get("party_name"),
+                "customer_name": doc.get("customer_name"),
+                "transaction_date": doc.transaction_date,
+                "valid_till": doc.valid_till,
+                "status": doc.status,
+                "docstatus": doc.docstatus,
+                "grand_total": doc.grand_total,
+                "items": [
+                    {
+                        "item_code": it.item_code,
+                        "item_name": it.item_name,
+                        "qty": it.qty,
+                        "rate": it.rate,
+                        "amount": it.amount,
+                        "uom": it.uom,
+                    } for it in doc.items
+                ],
+                "taxes": [
+                    {
+                        "account_head": tx.account_head,
+                        "description": tx.description,
+                        "rate": tx.rate,
+                        "tax_amount": tx.tax_amount,
+                    } for tx in (doc.get("taxes") or [])
+                ],
+            })
+
+        return response("Quotations fetched", {"quotations": quotations}, True, 200)
+
+    except frappe.PermissionError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_quotations_with_details")
+        return response("Permission denied", None, False, 403)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_quotations_with_details")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_quotation(customer=None, transaction_date=None, valid_till=None, items=None):
+    """Create a Draft Quotation for the current sales person."""
+    try:
+        data = frappe.request.get_json() or {}
+        customer = customer or data.get("customer")
+        transaction_date = transaction_date or data.get("transaction_date")
+        valid_till = valid_till or data.get("valid_till")
+        items = items if items is not None else data.get("items")
+
+        if not customer:
+            return response("Customer is required", None, False, 400)
+        if not items or not isinstance(items, list):
+            return response("At least one item is required", None, False, 400)
+        if not frappe.db.exists("Customer", customer):
+            return response(f"Customer '{customer}' does not exist", None, False, 404)
+
+        company_name = frappe.get_all("Company", fields=["name"], limit=1)[0].name
+        default_currency = frappe.get_cached_value("Company", company_name, "default_currency")
+
+        caller_sp = _resolve_caller_sales_person()
+
+        q = frappe.get_doc({
+            "doctype": "Quotation",
+            "quotation_to": "Customer",
+            "party_name": customer,
+            "customer": customer,
+            "company": company_name,
+            "currency": data.get("currency") or default_currency,
+            "transaction_date": frappe.utils.getdate(transaction_date) if transaction_date else nowdate(),
+            "valid_till": frappe.utils.getdate(valid_till) if valid_till else None,
+            "items": []
+        })
+
+        for item in items:
+            item_code = item.get("item_code")
+            if not item_code:
+                return response("item_code is required for each item", None, False, 400)
+            row = {
+                "item_code": item_code,
+                "qty": flt(item.get("qty", 1)),
+                "rate": flt(item.get("rate", 0)),
+                "price_list_rate": flt(item.get("rate", 0)),
+            }
+            if item.get("uom"):
+                row["uom"] = item.get("uom")
+            q.append("items", row)
+
+        if caller_sp:
+            q.append("sales_team", {
+                "sales_person": caller_sp,
+                "allocated_percentage": 100,
+            })
+
+        q.run_method("set_missing_values")
+        # india_compliance hooks compute GST on insert; no manual tax logic
+        q.insert()
+
+        return response("Quotation created", {"name": q.name}, True, 200)
+
+    except frappe.PermissionError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.create_quotation")
+        return response("Permission denied", None, False, 403)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.create_quotation")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def update_quotation(name=None, customer=None, valid_till=None, items=None):
+    """Update a Draft Quotation."""
+    try:
+        data = frappe.request.get_json() or {}
+        name = name or data.get("name")
+        customer = customer or data.get("customer")
+        valid_till = valid_till or data.get("valid_till")
+        items = items if items is not None else data.get("items")
+
+        if not name:
+            return response("Quotation name is required", None, False, 400)
+        if not customer:
+            return response("Customer is required", None, False, 400)
+        if not items or not isinstance(items, list):
+            return response("At least one item is required", None, False, 400)
+
+        if not frappe.db.exists("Quotation", name):
+            return response(f"Quotation '{name}' does not exist", None, False, 404)
+        if not frappe.db.exists("Customer", customer):
+            return response(f"Customer '{customer}' does not exist", None, False, 404)
+
+        doc = frappe.get_doc("Quotation", name)
+
+        if doc.docstatus != 0:
+            return response("Submitted orders cannot be edited", None, False, 400)
+
+        # Permission: caller must be a sales person on this quotation
+        caller_sp = _resolve_caller_sales_person()
+        if caller_sp:
+            sales_team_members = {row.sales_person for row in (doc.get("sales_team") or [])}
+            if sales_team_members and caller_sp not in sales_team_members:
+                return response("You do not have permission to edit this Quotation", None, False, 403)
+
+        doc.party_name = customer
+        doc.customer = customer
+        if valid_till:
+            doc.valid_till = frappe.utils.getdate(valid_till)
+
+        doc.set("items", [])
+        for item in items:
+            item_code = item.get("item_code")
+            if not item_code:
+                return response("item_code is required for each item", None, False, 400)
+            row = {
+                "item_code": item_code,
+                "qty": flt(item.get("qty", 1)),
+                "rate": flt(item.get("rate", 0)),
+                "price_list_rate": flt(item.get("rate", 0)),
+            }
+            if item.get("uom"):
+                row["uom"] = item.get("uom")
+            doc.append("items", row)
+
+        # india_compliance recomputes taxes on save
+        doc.save()
+
+        return response("Quotation updated", {"name": doc.name}, True, 200)
+
+    except frappe.PermissionError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.update_quotation")
+        return response("Permission denied", None, False, 403)
+    except frappe.DoesNotExistError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.update_quotation")
+        return response("Quotation not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.update_quotation")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def submit_quotation(name=None):
+    """Submit a Draft Quotation."""
+    try:
+        data = frappe.request.get_json() or {}
+        name = name or data.get("name")
+
+        if not name:
+            return response("Quotation name is required", None, False, 400)
+        if not frappe.db.exists("Quotation", name):
+            return response(f"Quotation '{name}' does not exist", None, False, 404)
+
+        doc = frappe.get_doc("Quotation", name)
+
+        if doc.docstatus != 0:
+            return response("Already submitted or cancelled", None, False, 400)
+
+        # Permission: caller must be a sales person on this quotation
+        caller_sp = _resolve_caller_sales_person()
+        if caller_sp:
+            sales_team_members = {row.sales_person for row in (doc.get("sales_team") or [])}
+            if sales_team_members and caller_sp not in sales_team_members:
+                return response("You do not have permission to submit this Quotation", None, False, 403)
+
+        doc.submit()
+
+        return response("Quotation submitted", {"name": doc.name, "status": doc.status}, True, 200)
+
+    except frappe.PermissionError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.submit_quotation")
+        return response("Permission denied", None, False, 403)
+    except frappe.DoesNotExistError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.submit_quotation")
+        return response("Quotation not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.submit_quotation")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def convert_quotation_to_sales_order(quotation_name=None, delivery_date=None):
+    """Convert a Submitted Quotation into a Draft Sales Order."""
+    try:
+        from erpnext.selling.doctype.quotation.quotation import make_sales_order
+
+        data = frappe.request.get_json() or {}
+        quotation_name = quotation_name or data.get("quotation_name")
+        delivery_date = delivery_date or data.get("delivery_date")
+
+        if not quotation_name:
+            return response("quotation_name is required", None, False, 400)
+        if not delivery_date:
+            return response("delivery_date is required", None, False, 400)
+        if not frappe.db.exists("Quotation", quotation_name):
+            return response(f"Quotation '{quotation_name}' does not exist", None, False, 404)
+
+        quotation = frappe.get_doc("Quotation", quotation_name)
+        if quotation.docstatus != 1:
+            return response("Only submitted quotations can be converted", None, False, 400)
+
+        # Permission: caller must be on the sales team
+        caller_sp = _resolve_caller_sales_person()
+        if caller_sp:
+            sales_team_members = {row.sales_person for row in (quotation.get("sales_team") or [])}
+            if sales_team_members and caller_sp not in sales_team_members:
+                return response("You do not have permission to convert this Quotation", None, False, 403)
+
+        parsed_date = frappe.utils.getdate(delivery_date)
+        target_doc = make_sales_order(source_name=quotation_name)
+        target_doc.delivery_date = parsed_date
+        for row in target_doc.items:
+            row.delivery_date = parsed_date
+
+        # india_compliance computes taxes on insert
+        target_doc.insert()
+
+        return response(
+            "Sales Order created from Quotation",
+            {"sales_order_name": target_doc.name},
+            True,
+            200,
+        )
+
+    except frappe.PermissionError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.convert_quotation_to_sales_order")
+        return response("Permission denied", None, False, 403)
+    except frappe.DoesNotExistError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.convert_quotation_to_sales_order")
+        return response("Quotation not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.convert_quotation_to_sales_order")
+        return response(str(e), None, False, 500)
 
         
