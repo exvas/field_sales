@@ -1977,6 +1977,12 @@ def create_sales_order():
 
         if submit_flag:
             so.submit()
+            _maybe_log_visit(
+                so,
+                data.get("latitude"),
+                data.get("longitude"),
+                "SO {}".format(so.name),
+            )
 
         return {
             "status": "success",
@@ -3418,6 +3424,46 @@ def _resolve_caller_sales_person():
     return sales_person
 
 
+def _maybe_log_visit(doc, latitude, longitude, source_label):
+    """Best-effort auto-log of a Customer Visit Log row tied to `doc`.
+
+    Called from create/submit flows when the doc is reaching docstatus=1.
+    Silently skips if lat/lng is missing or if log creation fails — must
+    NEVER raise back into the caller, the parent save is what matters.
+    """
+    try:
+        if latitude is None or longitude is None:
+            return None
+        try:
+            lat_f = float(latitude)
+            lng_f = float(longitude)
+        except (TypeError, ValueError):
+            return None
+        if lat_f == 0 and lng_f == 0:
+            return None
+
+        from frappe.utils import nowdate, nowtime
+
+        sales_person = _resolve_caller_sales_person()
+        if not sales_person:
+            return None
+
+        log = frappe.new_doc("Customer Visit Log")
+        log.employee = sales_person
+        log.date = nowdate()
+        log.time = nowtime()
+        log.latitude = lat_f
+        log.longitude = lng_f
+        # The Customer Visit Log uses customer_name as a free-text field.
+        log.customer_name = getattr(doc, "customer_name", None) or getattr(doc, "customer", "")
+        log.description = "Auto-logged via {}".format(source_label)
+        log.insert(ignore_permissions=True)
+        return log.name
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "field_sales._maybe_log_visit")
+        return None
+
+
 @frappe.whitelist(methods=["POST"])
 def update_sales_order(name=None, customer=None, delivery_date=None, items=None):
     """Update a Draft Sales Order. Submitted/cancelled SOs are rejected.
@@ -3657,6 +3703,12 @@ def create_quotation(customer=None, transaction_date=None, valid_till=None, item
 
         if submit_flag:
             q.submit()
+            _maybe_log_visit(
+                q,
+                data.get("latitude"),
+                data.get("longitude"),
+                "Quotation {}".format(q.name),
+            )
 
         return response(
             "Quotation created",
@@ -3768,6 +3820,12 @@ def submit_quotation(name=None):
                 return response("You do not have permission to submit this Quotation", None, False, 403)
 
         doc.submit()
+        _maybe_log_visit(
+            doc,
+            data.get("latitude"),
+            data.get("longitude"),
+            "Quotation {}".format(doc.name),
+        )
 
         return response("Quotation submitted", {"name": doc.name, "status": doc.status}, True, 200)
 
@@ -3869,6 +3927,12 @@ def submit_sales_order(name=None):
                 )
 
         doc.submit()
+        _maybe_log_visit(
+            doc,
+            data.get("latitude"),
+            data.get("longitude"),
+            "SO {}".format(doc.name),
+        )
         return response(
             "Sales Order submitted",
             {"name": doc.name, "status": doc.status},
