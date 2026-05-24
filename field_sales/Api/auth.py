@@ -4472,12 +4472,16 @@ def get_leave_types():
 
 @frappe.whitelist()
 def get_my_leave_balance():
-    """Return per-leave-type allocation/used/balance for the calling
-    user's Employee for the current leave year.
-    Uses ERPNext's get_leave_balance_on(employee, date) helper.
+    """Return per-leave-type allocated / used / balance for the calling
+    user's Employee for the current leave allocation period.
+
+    `allocated`: SUM(total_leaves_allocated) from active Leave Allocations
+    `balance`  : get_leave_balance_on() (HRMS helper — accounts for
+                 already-used leaves)
+    `used`     : allocated - balance (clamped to >= 0)
     """
     try:
-        from frappe.utils import nowdate
+        from frappe.utils import nowdate, getdate
 
         employee = _resolve_caller_employee()
         if not employee:
@@ -4487,31 +4491,117 @@ def get_my_leave_balance():
             get_leave_balance_on,
         )
 
+        today = getdate(nowdate())
+
+        # Get all active allocations grouped by leave type
+        alloc_rows = frappe.db.sql(
+            """
+            SELECT leave_type, SUM(total_leaves_allocated) AS allocated
+            FROM `tabLeave Allocation`
+            WHERE employee = %s AND docstatus = 1
+              AND from_date <= %s AND to_date >= %s
+            GROUP BY leave_type
+            """,
+            (employee, today, today),
+            as_dict=True,
+        )
+
+        rows = []
+        # Always include all leave types so the picker has options,
+        # even when the employee has no allocation yet.
         leave_types = frappe.get_all(
             "Leave Type",
             filters={"is_lwp": 0},
             fields=["name"],
             order_by="name",
         )
-        rows = []
+        alloc_dict = {r.leave_type: flt(r.allocated or 0) for r in alloc_rows}
+
         for lt in leave_types:
             try:
                 balance = get_leave_balance_on(
                     employee=employee,
                     leave_type=lt.name,
-                    date=nowdate(),
+                    date=today,
                 ) or 0
             except Exception:
                 balance = 0
-            rows.append({"leave_type": lt.name, "balance": flt(balance)})
+            allocated = alloc_dict.get(lt.name, 0)
+            used = max(allocated - flt(balance), 0)
+            rows.append({
+                "leave_type": lt.name,
+                "allocated": flt(allocated),
+                "used": flt(used),
+                "balance": flt(balance),
+            })
+
         return response(
             "Leave balance",
-            {"employee": employee, "balances": rows, "as_of": nowdate()},
+            {"employee": employee, "balances": rows, "as_of": str(today)},
             True,
             200,
         )
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.get_my_leave_balance")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_upcoming_holidays(limit=10):
+    """Return upcoming holidays from the calling user's Employee's
+    holiday_list, falling back to the company's default_holiday_list.
+    Weekly offs included; UI can filter them out if undesired."""
+    try:
+        from frappe.utils import nowdate
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        holiday_list = frappe.db.get_value("Employee", employee, "holiday_list")
+        if not holiday_list:
+            company = frappe.db.get_value("Employee", employee, "company")
+            if company:
+                holiday_list = frappe.db.get_value(
+                    "Company", company, "default_holiday_list"
+                )
+        if not holiday_list:
+            return response(
+                "No holiday list assigned",
+                {"holiday_list": None, "holidays": []},
+                True,
+                200,
+            )
+
+        rows = frappe.db.sql(
+            """
+            SELECT holiday_date, description, weekly_off
+            FROM `tabHoliday`
+            WHERE parent = %s AND holiday_date >= %s
+            ORDER BY holiday_date ASC
+            LIMIT %s
+            """,
+            (holiday_list, nowdate(), int(limit)),
+            as_dict=True,
+        )
+
+        return response(
+            "Upcoming holidays",
+            {
+                "holiday_list": holiday_list,
+                "holidays": [
+                    {
+                        "holiday_date": str(r.holiday_date),
+                        "description": r.description,
+                        "weekly_off": bool(r.weekly_off),
+                    } for r in rows
+                ],
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_upcoming_holidays")
         return response(str(e), None, False, 500)
 
 
