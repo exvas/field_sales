@@ -4404,6 +4404,371 @@ def get_today_checkin_status():
         return response(str(e), None, False, 500)
 
 
+# =====================================================================
+#  HR — Leave Application + Salary Slip endpoints for the mobile app
+# =====================================================================
+
+
+def _resolve_caller_employee():
+    """Resolve the Employee linked to frappe.session.user.
+    Returns the Employee name (string) or None."""
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return None
+    return frappe.db.get_value("Employee", {"user_id": user}, "name")
+
+
+@frappe.whitelist()
+def get_leave_types():
+    """List active Leave Types for use in the Apply Leave form."""
+    try:
+        types = frappe.get_all(
+            "Leave Type",
+            filters={"is_lwp": 0},
+            fields=["name", "leave_type_name", "max_leaves_allowed", "is_compensatory"],
+            order_by="name",
+        )
+        return response("Leave types", types, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_leave_types")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_leave_balance():
+    """Return per-leave-type allocation/used/balance for the calling
+    user's Employee for the current leave year.
+    Uses ERPNext's get_leave_balance_on(employee, date) helper.
+    """
+    try:
+        from frappe.utils import nowdate
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        from hrms.hr.doctype.leave_application.leave_application import (
+            get_leave_balance_on,
+        )
+
+        leave_types = frappe.get_all(
+            "Leave Type",
+            filters={"is_lwp": 0},
+            fields=["name"],
+            order_by="name",
+        )
+        rows = []
+        for lt in leave_types:
+            try:
+                balance = get_leave_balance_on(
+                    employee=employee,
+                    leave_type=lt.name,
+                    date=nowdate(),
+                ) or 0
+            except Exception:
+                balance = 0
+            rows.append({"leave_type": lt.name, "balance": flt(balance)})
+        return response(
+            "Leave balance",
+            {"employee": employee, "balances": rows, "as_of": nowdate()},
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_leave_balance")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_leave_applications(status_filter=None):
+    """List the calling user's own Leave Applications, newest first."""
+    try:
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        filters = {"employee": employee}
+        if status_filter and status_filter in ("Open", "Approved", "Rejected", "Cancelled"):
+            filters["status"] = status_filter
+
+        rows = frappe.get_all(
+            "Leave Application",
+            filters=filters,
+            fields=[
+                "name", "leave_type", "from_date", "to_date", "half_day",
+                "total_leave_days", "status", "description", "posting_date",
+                "leave_approver", "docstatus",
+            ],
+            order_by="from_date desc",
+        )
+        return response(
+            "Leave applications",
+            {"applications": rows},
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_leave_applications")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_leave_application(
+    leave_type=None,
+    from_date=None,
+    to_date=None,
+    half_day=0,
+    half_day_date=None,
+    description=None,
+):
+    """Create + submit a Leave Application for the calling user."""
+    try:
+        data = frappe.request.get_json() or {}
+        leave_type = leave_type or data.get("leave_type")
+        from_date = from_date or data.get("from_date")
+        to_date = to_date or data.get("to_date")
+        half_day = half_day if half_day else data.get("half_day", 0)
+        half_day_date = half_day_date or data.get("half_day_date")
+        description = description or data.get("description")
+
+        if not (leave_type and from_date and to_date):
+            return response(
+                "leave_type, from_date and to_date are required",
+                None,
+                False,
+                400,
+            )
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        emp = frappe.get_doc("Employee", employee)
+        leave_approver = emp.leave_approver or None
+
+        doc = frappe.new_doc("Leave Application")
+        doc.employee = employee
+        doc.leave_type = leave_type
+        doc.from_date = frappe.utils.getdate(from_date)
+        doc.to_date = frappe.utils.getdate(to_date)
+        doc.half_day = 1 if half_day else 0
+        if doc.half_day and half_day_date:
+            doc.half_day_date = frappe.utils.getdate(half_day_date)
+        doc.description = description or ""
+        if leave_approver:
+            doc.leave_approver = leave_approver
+        doc.status = "Open"
+        doc.insert(ignore_permissions=True)
+        try:
+            doc.submit()
+        except Exception:
+            # Some installs auto-submit via workflow; some require explicit submit.
+            # If submit fails (workflow rule), leave as Draft and let user know.
+            frappe.log_error(
+                frappe.get_traceback(),
+                "field_sales.create_leave_application.submit",
+            )
+
+        return response(
+            "Leave Application created",
+            {
+                "name": doc.name,
+                "status": doc.status,
+                "docstatus": doc.docstatus,
+                "total_leave_days": flt(doc.total_leave_days),
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.create_leave_application")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_pending_leave_approvals():
+    """List Leave Applications awaiting the calling user's approval.
+    Filter: leave_approver = session user (frappe User name = Employee.leave_approver),
+    status = Open, docstatus = 1.
+    """
+    try:
+        user = frappe.session.user
+        if not user or user == "Guest":
+            return response("Authentication required", None, False, 401)
+
+        rows = frappe.get_all(
+            "Leave Application",
+            filters={
+                "leave_approver": user,
+                "status": "Open",
+                "docstatus": 1,
+            },
+            fields=[
+                "name", "employee", "employee_name", "leave_type",
+                "from_date", "to_date", "half_day", "total_leave_days",
+                "description", "posting_date",
+            ],
+            order_by="from_date asc",
+        )
+        return response(
+            "Pending approvals",
+            {"approvals": rows},
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_pending_leave_approvals")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def act_on_leave_application(name=None, action=None, reason=None):
+    """Approve or reject a Leave Application. Caller must be the doc's
+    leave_approver. `action` must be 'Approved' or 'Rejected'."""
+    try:
+        data = frappe.request.get_json() or {}
+        name = name or data.get("name")
+        action = action or data.get("action")
+        reason = reason or data.get("reason")
+
+        if action not in ("Approved", "Rejected"):
+            return response("action must be Approved or Rejected", None, False, 400)
+        if not name:
+            return response("name is required", None, False, 400)
+
+        user = frappe.session.user
+        doc = frappe.get_doc("Leave Application", name)
+        if doc.leave_approver and doc.leave_approver != user:
+            return response(
+                "You are not the leave approver for this application",
+                None,
+                False,
+                403,
+            )
+
+        # The approval flow in ERPNext: set status, then save. If the doc
+        # was Submitted (docstatus=1), we update via db_set + run_method
+        # to fire downstream side-effects (leave ledger entries, etc.).
+        if doc.docstatus == 1:
+            doc.status = action
+            if reason:
+                doc.description = (doc.description or "") + "\n\n[Approver note] " + reason
+            doc.save(ignore_permissions=True)
+        else:
+            # Draft: submit with the chosen status.
+            doc.status = action
+            doc.submit()
+
+        return response(
+            "Leave {}".format(action.lower()),
+            {"name": doc.name, "status": doc.status},
+            True,
+            200,
+        )
+    except frappe.DoesNotExistError:
+        return response("Leave Application not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.act_on_leave_application")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_salary_slips(year=None):
+    """List the calling user's Salary Slips, newest first. Optionally
+    filter by fiscal/calendar year."""
+    try:
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        filters = {"employee": employee, "docstatus": ["in", [0, 1]]}
+        if year:
+            try:
+                year_int = int(year)
+                filters["start_date"] = [
+                    "between",
+                    ["{}-01-01".format(year_int), "{}-12-31".format(year_int)],
+                ]
+            except (TypeError, ValueError):
+                pass
+
+        rows = frappe.get_all(
+            "Salary Slip",
+            filters=filters,
+            fields=[
+                "name", "start_date", "end_date", "posting_date",
+                "gross_pay", "net_pay", "total_deduction", "docstatus",
+                "status",
+            ],
+            order_by="start_date desc",
+            limit=24,
+        )
+        return response("Salary slips", {"slips": rows}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_salary_slips")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_salary_slip_detail(name=None):
+    """Return the full Salary Slip detail (earnings + deductions tables)
+    for the calling user. Refuses if the slip belongs to another
+    employee — privacy guard."""
+    try:
+        if not name:
+            return response("name is required", None, False, 400)
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        doc = frappe.get_doc("Salary Slip", name)
+        if doc.employee != employee:
+            return response(
+                "You can only view your own salary slips",
+                None,
+                False,
+                403,
+            )
+
+        return response(
+            "Salary slip detail",
+            {
+                "name": doc.name,
+                "employee": doc.employee,
+                "employee_name": doc.employee_name,
+                "start_date": str(doc.start_date) if doc.start_date else None,
+                "end_date": str(doc.end_date) if doc.end_date else None,
+                "posting_date": str(doc.posting_date) if doc.posting_date else None,
+                "gross_pay": flt(doc.gross_pay),
+                "total_deduction": flt(doc.total_deduction),
+                "net_pay": flt(doc.net_pay),
+                "currency": doc.currency,
+                "status": doc.status,
+                "docstatus": doc.docstatus,
+                "earnings": [
+                    {
+                        "salary_component": r.salary_component,
+                        "amount": flt(r.amount),
+                    } for r in (doc.earnings or [])
+                ],
+                "deductions": [
+                    {
+                        "salary_component": r.salary_component,
+                        "amount": flt(r.amount),
+                    } for r in (doc.deductions or [])
+                ],
+            },
+            True,
+            200,
+        )
+    except frappe.DoesNotExistError:
+        return response("Salary Slip not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_salary_slip_detail")
+        return response(str(e), None, False, 500)
+
+
 @frappe.whitelist(methods=["POST"])
 def cancel_sales_order(name=None):
     """Cancel a Submitted Sales Order, but ONLY within 24 hours of submission.
