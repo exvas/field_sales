@@ -20,27 +20,33 @@
   {
    "fieldname": "employee",
    "fieldtype": "Link",
+   "in_list_view": 1,
    "label": "Sales Person Id",
    "options": "Sales Person"
   },
   {
    "fieldname": "date",
    "fieldtype": "Date",
+   "in_list_view": 1,
    "label": "Date"
   },
   {
    "fieldname": "customer_name",
    "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Customer Name"
   },
   {
    "fieldname": "longitude",
    "fieldtype": "Float",
+   "in_list_view": 1,
    "label": "Longitude"
   },
   {
    "fieldname": "latitude",
    "fieldtype": "Float",
+   "in_list_view": 1,
    "label": "Latitude"
   },
   {
@@ -51,6 +57,8 @@
   {
    "fieldname": "time",
    "fieldtype": "Time",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Time"
   },
   {
@@ -65,11 +73,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-08-08 10:28:18.285862",
+ "modified": "2026-05-24 10:16:53.979304",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Customer Visit Log",
- "naming_rule": "Expression (old style)",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {
@@ -85,6 +93,8 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": []

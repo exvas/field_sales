@@ -1,0 +1,234 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "format:CB-.YYYY.-.#####",
+ "creation": "2026-05-23 20:30:00.000000",
+ "doctype": "DocType",
+ "document_type": "Document",
+ "engine": "InnoDB",
+ "field_order": [
+  "payment_entry",
+  "bounce_date",
+  "column_break_1",
+  "customer",
+  "original_amount",
+  "section_break_2",
+  "cheque_no",
+  "cheque_date",
+  "column_break_3",
+  "bank_account",
+  "mode_of_payment",
+  "section_break_bounce",
+  "bounce_reason",
+  "bounce_charge_amount",
+  "column_break_bounce",
+  "charge_to_customer",
+  "section_break_accounts",
+  "bank_charges_account",
+  "column_break_accounts",
+  "cheque_bounce_income_account",
+  "section_break_actions",
+  "cancelled_payment_entry",
+  "bank_charge_journal_entry",
+  "column_break_actions",
+  "customer_debit_journal_entry",
+  "section_break_remarks",
+  "remarks"
+ ],
+ "fields": [
+  {
+   "fieldname": "payment_entry",
+   "fieldtype": "Link",
+   "label": "Payment Entry",
+   "options": "Payment Entry",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "bounce_date",
+   "fieldtype": "Date",
+   "label": "Bounce Date",
+   "reqd": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {"fieldname": "column_break_1", "fieldtype": "Column Break"},
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "label": "Customer",
+   "options": "Customer",
+   "fetch_from": "payment_entry.party",
+   "read_only": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "original_amount",
+   "fieldtype": "Currency",
+   "label": "Original Cheque Amount",
+   "fetch_from": "payment_entry.paid_amount",
+   "read_only": 1,
+   "in_list_view": 1
+  },
+  {"fieldname": "section_break_2", "fieldtype": "Section Break", "label": "Cheque Details"},
+  {
+   "fieldname": "cheque_no",
+   "fieldtype": "Data",
+   "label": "Cheque No",
+   "fetch_from": "payment_entry.reference_no",
+   "read_only": 1
+  },
+  {
+   "fieldname": "cheque_date",
+   "fieldtype": "Date",
+   "label": "Cheque Date",
+   "fetch_from": "payment_entry.reference_date",
+   "read_only": 1
+  },
+  {"fieldname": "column_break_3", "fieldtype": "Column Break"},
+  {
+   "fieldname": "bank_account",
+   "fieldtype": "Link",
+   "label": "Bank Account",
+   "options": "Account",
+   "fetch_from": "payment_entry.paid_to",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mode_of_payment",
+   "fieldtype": "Data",
+   "label": "Mode of Payment",
+   "fetch_from": "payment_entry.mode_of_payment",
+   "read_only": 1
+  },
+  {"fieldname": "section_break_bounce", "fieldtype": "Section Break", "label": "Bounce Information"},
+  {
+   "fieldname": "bounce_reason",
+   "fieldtype": "Select",
+   "label": "Bounce Reason",
+   "options": "Insufficient Funds\nSignature Mismatch\nStop Payment\nStale Cheque\nAccount Closed\nPost-dated Cheque Presented Early\nAmount in Words and Figures Differ\nOther",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bounce_charge_amount",
+   "fieldtype": "Currency",
+   "label": "Bounce Charge Amount",
+   "default": "250",
+   "reqd": 1
+  },
+  {"fieldname": "column_break_bounce", "fieldtype": "Column Break"},
+  {
+   "fieldname": "charge_to_customer",
+   "fieldtype": "Check",
+   "label": "Charge to Customer",
+   "default": "1",
+   "description": "If checked, the bounce charge will be billed back to the customer via a Journal Entry."
+  },
+  {"fieldname": "section_break_accounts", "fieldtype": "Section Break", "label": "Accounting"},
+  {
+   "fieldname": "bank_charges_account",
+   "fieldtype": "Link",
+   "label": "Bank Charges Account",
+   "options": "Account",
+   "reqd": 1,
+   "description": "Expense account where the bank's bounce fee will be debited."
+  },
+  {"fieldname": "column_break_accounts", "fieldtype": "Column Break"},
+  {
+   "fieldname": "cheque_bounce_income_account",
+   "fieldtype": "Link",
+   "label": "Cheque Bounce Income Account",
+   "options": "Account",
+   "description": "Income account credited when recovering the bounce charge from the customer. Required only if Charge to Customer is checked.",
+   "depends_on": "eval:doc.charge_to_customer"
+  },
+  {"fieldname": "section_break_actions", "fieldtype": "Section Break", "label": "Actions Taken", "collapsible": 1},
+  {
+   "fieldname": "cancelled_payment_entry",
+   "fieldtype": "Link",
+   "label": "Cancelled Payment Entry",
+   "options": "Payment Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "bank_charge_journal_entry",
+   "fieldtype": "Link",
+   "label": "Bank Charge Journal Entry",
+   "options": "Journal Entry",
+   "read_only": 1
+  },
+  {"fieldname": "column_break_actions", "fieldtype": "Column Break"},
+  {
+   "fieldname": "customer_debit_journal_entry",
+   "fieldtype": "Link",
+   "label": "Customer Debit Journal Entry",
+   "options": "Journal Entry",
+   "read_only": 1
+  },
+  {"fieldname": "section_break_remarks", "fieldtype": "Section Break", "label": "Remarks"},
+  {
+   "fieldname": "remarks",
+   "fieldtype": "Text",
+   "label": "Remarks"
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-05-23 20:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Field Sales",
+ "name": "Cheque Bounce",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "cancel": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 0,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "submit": 1,
+   "cancel": 1,
+   "write": 1
+  },
+  {
+   "create": 0,
+   "delete": 0,
+   "email": 0,
+   "export": 0,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 0,
+   "submit": 0,
+   "cancel": 0,
+   "write": 0
+  }
+ ],
+ "sort_field": "bounce_date",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "customer",
+ "track_changes": 1
+}
