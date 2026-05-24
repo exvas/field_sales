@@ -6,7 +6,8 @@
  "engine": "InnoDB",
  "field_order": [
   "enable_stock_validation",
-  "default_company"
+  "default_company",
+  "google_oauth_web_client_id"
  ],
  "fields": [
   {
@@ -21,6 +22,12 @@
    "label": "Default Company for Mobile App",
    "options": "Company",
    "description": "Fallback company when the logged-in user's Employee record has no company set. Leave blank to use the first Company in the database."
+  },
+  {
+   "fieldname": "google_oauth_web_client_id",
+   "fieldtype": "Data",
+   "label": "Google OAuth Web Client ID",
+   "description": "OAuth Web Client ID from Google Cloud Console (the *Web application* type, not Android). The mobile sends an ID token with this as the audience; backend verifies. Leave blank to disable Google Sign-In."
   }
  ],
  "grid_page_length": 50,

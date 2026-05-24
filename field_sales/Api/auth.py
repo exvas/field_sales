@@ -4769,6 +4769,136 @@ def get_salary_slip_detail(name=None):
         return response(str(e), None, False, 500)
 
 
+# =====================================================================
+#  SOCIAL LOGIN — Google Sign-In (mobile)
+# =====================================================================
+
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def social_login_google(id_token=None):
+    """Exchange a Google ID token for a Frappe session.
+
+    Mobile (google_sign_in package) does the native Google auth flow
+    and gets a JWT id_token whose `aud` claim is the Web OAuth client
+    configured on Chundakadan Settings. This endpoint verifies the
+    token's signature + audience, looks up the matching Frappe User
+    by email, and creates a session — returns the sid for the mobile
+    client to store and use as a cookie on subsequent calls.
+
+    Security:
+    - Token signature verified against Google's published JWKS
+    - audience (aud) must match Chundakadan Settings.google_oauth_web_client_id
+    - issuer (iss) must be one of Google's accepted issuers
+    - email must already exist in tabUser (no auto-provisioning)
+    - account must be enabled
+    """
+    try:
+        data = frappe.request.get_json() or {}
+        id_token_str = id_token or data.get("id_token")
+        if not id_token_str:
+            return response("id_token is required", None, False, 400)
+
+        expected_aud = frappe.db.get_single_value(
+            "Chundakadan Settings", "google_oauth_web_client_id"
+        )
+        if not expected_aud:
+            return response(
+                "Google Sign-In is not configured. Ask admin to set "
+                "'Google OAuth Web Client ID' in Chundakadan Settings.",
+                None,
+                False,
+                503,
+            )
+
+        # Verify the token using Google's auth library. This calls out
+        # to https://www.googleapis.com/oauth2/v3/certs (cached).
+        try:
+            from google.oauth2 import id_token as google_id_token
+            from google.auth.transport import requests as google_requests
+        except ImportError:
+            return response(
+                "Backend missing google-auth library. Install via "
+                "'/home/frappe/<bench>/env/bin/pip install google-auth' "
+                "then restart bench.",
+                None,
+                False,
+                500,
+            )
+
+        try:
+            idinfo = google_id_token.verify_oauth2_token(
+                id_token_str,
+                google_requests.Request(),
+                expected_aud,
+            )
+        except ValueError as ve:
+            return response(
+                "Google token invalid or expired: {}".format(str(ve)),
+                None,
+                False,
+                401,
+            )
+
+        # Issuer must be Google
+        if idinfo.get("iss") not in (
+            "accounts.google.com",
+            "https://accounts.google.com",
+        ):
+            return response("Token not issued by Google", None, False, 401)
+
+        email = (idinfo.get("email") or "").strip().lower()
+        if not email:
+            return response("Token has no email claim", None, False, 400)
+        if not idinfo.get("email_verified", False):
+            return response("Google email not verified", None, False, 401)
+
+        # Look up Frappe User by exact email match (case-insensitive)
+        user_name = frappe.db.get_value(
+            "User",
+            {"email": email},
+            "name",
+        )
+        if not user_name:
+            return response(
+                "No Frappe User found for {}. Contact admin to provision your account.".format(email),
+                None,
+                False,
+                404,
+            )
+        if not frappe.db.get_value("User", user_name, "enabled"):
+            return response(
+                "Account '{}' is disabled. Contact admin.".format(user_name),
+                None,
+                False,
+                403,
+            )
+
+        # Create a real Frappe session as that user. We bypass the
+        # LoginManager password check because we already verified the
+        # caller's identity via Google.
+        from frappe.auth import LoginManager
+        login_manager = LoginManager()
+        login_manager.user = user_name
+        login_manager.post_login()
+
+        sid = frappe.local.session.sid
+        full_name = frappe.db.get_value("User", user_name, "full_name") or user_name
+
+        return response(
+            "Login successful",
+            {
+                "sid": sid,
+                "user": user_name,
+                "email": email,
+                "full_name": full_name,
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.social_login_google")
+        return response(str(e), None, False, 500)
+
+
 @frappe.whitelist(methods=["POST"])
 def cancel_sales_order(name=None):
     """Cancel a Submitted Sales Order, but ONLY within 24 hours of submission.
