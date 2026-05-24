@@ -2480,6 +2480,17 @@ def create_payment_entry_from_sales_invoices():
         pe.unallocated_amount = float(total_allocated_amount) - allocated_total
 
     pe.insert()
+
+    # Auto-create Customer Visit Log when the mobile app sends GPS.
+    # The salesperson is physically at the customer when they record a PE,
+    # so the visit happens at insert time (not at submit, which can be later).
+    _maybe_log_visit(
+        pe,
+        data.get("latitude"),
+        data.get("longitude"),
+        "PE {}".format(pe.name),
+    )
+
     frappe.db.commit()
 
     return {
@@ -3516,7 +3527,14 @@ def _maybe_log_visit(doc, latitude, longitude, source_label):
         log.latitude = lat_f
         log.longitude = lng_f
         # The Customer Visit Log uses customer_name as a free-text field.
-        log.customer_name = getattr(doc, "customer_name", None) or getattr(doc, "customer", "")
+        # Handle SO/Quotation (customer / customer_name) AND
+        # Payment Entry (party / party_name) field shapes.
+        log.customer_name = (
+            getattr(doc, "customer_name", None)
+            or getattr(doc, "party_name", None)
+            or getattr(doc, "customer", None)
+            or getattr(doc, "party", "")
+        )
         log.description = "Auto-logged via {}".format(source_label)
         log.insert(ignore_permissions=True)
         return log.name
@@ -4270,6 +4288,119 @@ def get_today_snapshot(sales_person_id=None):
         )
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.get_today_snapshot")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_employee_checkin(log_type=None, latitude=None, longitude=None):
+    """Mobile-app Check-In / Check-Out.
+
+    Creates a standard ERPNext `Employee Checkin` for the calling user
+    with the current timestamp + (optional) GPS. If a Shift Type is
+    configured on the Employee, ERPNext's auto-attendance cron will
+    roll the IN/OUT pairs into a daily Attendance record automatically
+    (skip_auto_attendance is left at the default 0).
+    """
+    try:
+        from frappe.utils import now_datetime
+
+        data = frappe.request.get_json() or {}
+        log_type = log_type or data.get("log_type")
+        latitude = latitude if latitude is not None else data.get("latitude")
+        longitude = longitude if longitude is not None else data.get("longitude")
+        device_id = data.get("device_id") or "mobile_app"
+
+        if log_type not in ("IN", "OUT"):
+            return response("log_type must be 'IN' or 'OUT'", None, False, 400)
+
+        user = frappe.session.user
+        if not user or user == "Guest":
+            return response("Authentication required", None, False, 401)
+
+        employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+        if not employee:
+            return response(
+                "No Employee record linked to user '{}'".format(user),
+                None,
+                False,
+                404,
+            )
+
+        checkin = frappe.new_doc("Employee Checkin")
+        checkin.employee = employee
+        checkin.log_type = log_type
+        checkin.time = now_datetime()
+        checkin.device_id = device_id
+
+        meta = frappe.get_meta("Employee Checkin")
+        if latitude is not None and meta.has_field("custom_latitude"):
+            try:
+                checkin.custom_latitude = float(latitude)
+            except (TypeError, ValueError):
+                pass
+        if longitude is not None and meta.has_field("custom_longitude"):
+            try:
+                checkin.custom_longitude = float(longitude)
+            except (TypeError, ValueError):
+                pass
+
+        checkin.insert(ignore_permissions=True)
+
+        return response(
+            "Checkin recorded",
+            {
+                "name": checkin.name,
+                "log_type": checkin.log_type,
+                "time": str(checkin.time),
+                "employee": checkin.employee,
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.create_employee_checkin")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_today_checkin_status():
+    """Return the calling user's most recent Employee Checkin for today,
+    so the mobile UI can show 'Last checked IN at 09:42 AM' without
+    storing state client-side."""
+    try:
+        from frappe.utils import today
+
+        user = frappe.session.user
+        if not user or user == "Guest":
+            return response("Authentication required", None, False, 401)
+        employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        rows = frappe.get_all(
+            "Employee Checkin",
+            filters={
+                "employee": employee,
+                "time": [">=", today()],
+            },
+            fields=["name", "log_type", "time"],
+            order_by="time desc",
+            limit=1,
+        )
+        last = rows[0] if rows else None
+        return response(
+            "Checkin status",
+            {
+                "employee": employee,
+                "last_log_type": last["log_type"] if last else None,
+                "last_time": str(last["time"]) if last else None,
+                "is_checked_in": bool(last and last["log_type"] == "IN"),
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_today_checkin_status")
         return response(str(e), None, False, 500)
 
 
