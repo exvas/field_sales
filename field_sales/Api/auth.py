@@ -4605,6 +4605,411 @@ def get_upcoming_holidays(limit=10):
         return response(str(e), None, False, 500)
 
 
+# =====================================================================
+#  EXPENSE CLAIM + EMPLOYEE ADVANCE
+# =====================================================================
+
+_EXPENSE_STATUSES = ("Draft", "Submitted", "Approved", "Rejected", "Paid", "Cancelled")
+
+
+@frappe.whitelist()
+def get_my_expense_summary():
+    """Headline totals for the calling user's Expense Claims (current
+    calendar year) — feeds the mobile summary card."""
+    try:
+        from frappe.utils import nowdate, getdate
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        year = getdate(nowdate()).year
+        year_start = "{}-01-01".format(year)
+        year_end = "{}-12-31".format(year)
+
+        rows = frappe.db.sql(
+            """
+            SELECT approval_status, SUM(total_claimed_amount) AS total
+            FROM `tabExpense Claim`
+            WHERE employee = %s
+              AND docstatus IN (0, 1)
+              AND posting_date BETWEEN %s AND %s
+            GROUP BY approval_status
+            """,
+            (employee, year_start, year_end),
+            as_dict=True,
+        )
+
+        buckets = {"Draft": 0, "Approved": 0, "Rejected": 0}
+        total = 0
+        for r in rows:
+            amt = flt(r.total or 0)
+            total += amt
+            if r.approval_status in buckets:
+                buckets[r.approval_status] += amt
+
+        return response(
+            "Expense summary",
+            {
+                "employee": employee,
+                "year": year,
+                "total": flt(total),
+                "pending": flt(buckets["Draft"]),
+                "approved": flt(buckets["Approved"]),
+                "rejected": flt(buckets["Rejected"]),
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_expense_summary")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_expense_claims(status=None, limit=50):
+    """Caller's Expense Claims, newest first, with optional status filter."""
+    try:
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        filters = {"employee": employee, "docstatus": ["in", [0, 1]]}
+        if status and status in _EXPENSE_STATUSES:
+            filters["approval_status"] = status
+
+        rows = frappe.get_all(
+            "Expense Claim",
+            filters=filters,
+            fields=[
+                "name", "posting_date", "total_claimed_amount",
+                "total_sanctioned_amount", "total_advance_amount",
+                "total_taxes_and_charges", "grand_total",
+                "approval_status", "status", "docstatus",
+            ],
+            order_by="posting_date desc",
+            limit=int(limit),
+        )
+        return response(
+            "Expense claims",
+            {"claims": rows},
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_expense_claims")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_expense_claim_detail(name=None):
+    """Full Expense Claim detail (header + expense lines). Privacy guard:
+    refuses if the claim doesn't belong to the caller (unless caller is
+    the listed expense_approver)."""
+    try:
+        if not name:
+            return response("name is required", None, False, 400)
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        doc = frappe.get_doc("Expense Claim", name)
+        if doc.employee != employee and doc.expense_approver != frappe.session.user:
+            return response(
+                "You can only view your own expense claims",
+                None,
+                False,
+                403,
+            )
+
+        return response(
+            "Expense claim detail",
+            {
+                "name": doc.name,
+                "employee": doc.employee,
+                "employee_name": doc.employee_name,
+                "posting_date": str(doc.posting_date) if doc.posting_date else None,
+                "company": doc.company,
+                "approval_status": doc.approval_status,
+                "status": doc.status,
+                "docstatus": doc.docstatus,
+                "total_claimed_amount": flt(doc.total_claimed_amount),
+                "total_sanctioned_amount": flt(doc.total_sanctioned_amount),
+                "total_taxes_and_charges": flt(doc.total_taxes_and_charges),
+                "total_advance_amount": flt(doc.total_advance_amount),
+                "grand_total": flt(doc.grand_total),
+                "expense_approver": doc.expense_approver,
+                "expenses": [
+                    {
+                        "expense_date": str(e.expense_date) if e.expense_date else None,
+                        "expense_type": e.expense_type,
+                        "description": e.description,
+                        "amount": flt(e.amount),
+                        "sanctioned_amount": flt(e.sanctioned_amount),
+                    } for e in (doc.expenses or [])
+                ],
+                "taxes": [
+                    {
+                        "account_head": t.account_head,
+                        "description": t.description,
+                        "rate": flt(t.rate),
+                        "tax_amount": flt(t.tax_amount),
+                    } for t in (doc.taxes or [])
+                ],
+                "attachments": [
+                    {"file_url": f.file_url, "file_name": f.file_name}
+                    for f in frappe.get_all(
+                        "File",
+                        filters={"attached_to_doctype": "Expense Claim",
+                                 "attached_to_name": doc.name},
+                        fields=["file_url", "file_name"],
+                    )
+                ],
+            },
+            True,
+            200,
+        )
+    except frappe.DoesNotExistError:
+        return response("Expense Claim not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_expense_claim_detail")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_expense_claim_types():
+    """List Expense Claim Types for the form picker."""
+    try:
+        rows = frappe.get_all("Expense Claim Type", fields=["name"], order_by="name")
+        return response("Expense claim types", {"types": rows}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_expense_claim_types")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_expense_claim(
+    posting_date=None,
+    expenses=None,
+    company=None,
+    remark=None,
+    submit=False,
+):
+    """Create (and optionally submit) an Expense Claim for the calling
+    user. `expenses` is a list of {expense_date, expense_type,
+    description, amount} dicts."""
+    try:
+        data = frappe.request.get_json() or {}
+        posting_date = posting_date or data.get("posting_date")
+        expenses = expenses if expenses is not None else data.get("expenses", [])
+        company = company or data.get("company")
+        remark = remark or data.get("remark")
+        submit_flag = data.get("submit", submit) if isinstance(submit, bool) else submit
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+        if not expenses or not isinstance(expenses, list):
+            return response("At least one expense line is required", None, False, 400)
+
+        emp = frappe.get_doc("Employee", employee)
+        if not company:
+            company = emp.company or _resolve_company_for_caller()
+
+        doc = frappe.new_doc("Expense Claim")
+        doc.employee = employee
+        doc.company = company
+        doc.posting_date = frappe.utils.getdate(posting_date) if posting_date else frappe.utils.nowdate()
+        if emp.expense_approver:
+            doc.expense_approver = emp.expense_approver
+        if remark:
+            doc.remark = remark
+
+        for line in expenses:
+            doc.append("expenses", {
+                "expense_date": frappe.utils.getdate(line.get("expense_date")) if line.get("expense_date") else doc.posting_date,
+                "expense_type": line.get("expense_type"),
+                "description": line.get("description") or "",
+                "amount": flt(line.get("amount", 0)),
+                "sanctioned_amount": flt(line.get("amount", 0)),
+            })
+
+        doc.flags.ignore_mandatory = True
+        doc.insert(ignore_permissions=True)
+        if submit_flag:
+            try:
+                doc.submit()
+            except Exception:
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    "field_sales.create_expense_claim.submit",
+                )
+
+        return response(
+            "Expense Claim created",
+            {
+                "name": doc.name,
+                "approval_status": doc.approval_status,
+                "docstatus": doc.docstatus,
+                "total_claimed_amount": flt(doc.total_claimed_amount),
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.create_expense_claim")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_pending_expense_approvals():
+    """Expense Claims awaiting the calling user's approval
+    (expense_approver = session user, approval_status = Draft,
+    docstatus = 1)."""
+    try:
+        user = frappe.session.user
+        if not user or user == "Guest":
+            return response("Authentication required", None, False, 401)
+
+        rows = frappe.get_all(
+            "Expense Claim",
+            filters={
+                "expense_approver": user,
+                "approval_status": "Draft",
+                "docstatus": 1,
+            },
+            fields=[
+                "name", "employee", "employee_name", "posting_date",
+                "total_claimed_amount", "company",
+            ],
+            order_by="posting_date asc",
+        )
+        return response("Pending expense approvals", {"approvals": rows}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_pending_expense_approvals")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def act_on_expense_claim(name=None, action=None, reason=None):
+    """Approve or Reject an Expense Claim. Caller must be the doc's
+    expense_approver. action: 'Approved' or 'Rejected'."""
+    try:
+        data = frappe.request.get_json() or {}
+        name = name or data.get("name")
+        action = action or data.get("action")
+        reason = reason or data.get("reason")
+
+        if action not in ("Approved", "Rejected"):
+            return response("action must be Approved or Rejected", None, False, 400)
+        if not name:
+            return response("name is required", None, False, 400)
+
+        user = frappe.session.user
+        doc = frappe.get_doc("Expense Claim", name)
+        if doc.expense_approver and doc.expense_approver != user:
+            return response(
+                "You are not the expense approver for this claim",
+                None,
+                False,
+                403,
+            )
+
+        doc.approval_status = action
+        if reason:
+            doc.remark = (doc.remark or "") + "\n\n[Approver note] " + reason
+
+        if doc.docstatus == 0:
+            doc.submit()
+        else:
+            doc.save(ignore_permissions=True)
+
+        return response(
+            "Expense Claim {}".format(action.lower()),
+            {"name": doc.name, "approval_status": doc.approval_status},
+            True,
+            200,
+        )
+    except frappe.DoesNotExistError:
+        return response("Expense Claim not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.act_on_expense_claim")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_employee_advances():
+    """Caller's Employee Advances — paid_amount / advance_amount."""
+    try:
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        rows = frappe.get_all(
+            "Employee Advance",
+            filters={"employee": employee, "docstatus": ["in", [0, 1]]},
+            fields=[
+                "name", "purpose", "advance_amount", "paid_amount",
+                "claimed_amount", "return_amount", "status",
+                "posting_date", "advance_account",
+            ],
+            order_by="posting_date desc",
+            limit=20,
+        )
+        return response("Employee advances", {"advances": rows}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_employee_advances")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def request_employee_advance(
+    advance_amount=None,
+    purpose=None,
+    posting_date=None,
+):
+    """Submit an Employee Advance request for the calling user."""
+    try:
+        data = frappe.request.get_json() or {}
+        advance_amount = advance_amount or data.get("advance_amount")
+        purpose = purpose or data.get("purpose")
+        posting_date = posting_date or data.get("posting_date")
+
+        if not advance_amount or flt(advance_amount) <= 0:
+            return response("advance_amount must be > 0", None, False, 400)
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        emp = frappe.get_doc("Employee", employee)
+        company = emp.company or _resolve_company_for_caller()
+
+        doc = frappe.new_doc("Employee Advance")
+        doc.employee = employee
+        doc.company = company
+        doc.purpose = purpose or "Advance request via mobile"
+        doc.advance_amount = flt(advance_amount)
+        doc.posting_date = frappe.utils.getdate(posting_date) if posting_date else frappe.utils.nowdate()
+        doc.flags.ignore_mandatory = True
+        doc.insert(ignore_permissions=True)
+
+        return response(
+            "Advance requested",
+            {
+                "name": doc.name,
+                "advance_amount": flt(doc.advance_amount),
+                "status": doc.status,
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.request_employee_advance")
+        return response(str(e), None, False, 500)
+
+
 @frappe.whitelist()
 def get_my_leave_applications(status_filter=None):
     """List the calling user's own Leave Applications, newest first."""
