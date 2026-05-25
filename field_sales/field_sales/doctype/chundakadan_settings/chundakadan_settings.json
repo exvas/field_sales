@@ -7,7 +7,11 @@
  "field_order": [
   "enable_stock_validation",
   "default_company",
-  "google_oauth_web_client_id"
+  "google_oauth_web_client_id",
+  "section_visibility",
+  "view_all_transaction_role",
+  "section_mop_mapping",
+  "mop_mapping"
  ],
  "fields": [
   {
@@ -28,13 +32,37 @@
    "fieldtype": "Data",
    "label": "Google OAuth Web Client ID",
    "description": "OAuth Web Client ID from Google Cloud Console (the *Web application* type, not Android). The mobile sends an ID token with this as the audience; backend verifies. Leave blank to disable Google Sign-In."
+  },
+  {
+   "fieldname": "section_visibility",
+   "fieldtype": "Section Break",
+   "label": "Mobile Visibility"
+  },
+  {
+   "fieldname": "view_all_transaction_role",
+   "fieldtype": "Link",
+   "label": "View All Transaction Role",
+   "options": "Role",
+   "description": "Sales people in this Role bypass the per-sales-person filter on Mobile API list endpoints (Quotation, Sales Order, Payment Entry, Sales Invoice). Useful for sales managers who need to oversee everyone's pipeline from the mobile app. Leave blank to keep the default behaviour (each sales person sees only their own)."
+  },
+  {
+   "fieldname": "section_mop_mapping",
+   "fieldtype": "Section Break",
+   "label": "Sales Person Mode of Payment Mapping"
+  },
+  {
+   "fieldname": "mop_mapping",
+   "fieldtype": "Table",
+   "label": "Sales Person MOP Mapping",
+   "options": "Chundakadan Sales Person MOP",
+   "description": "Per Sales Person + Company + Mode of Payment override of the paid_to account on Payment Entries created via the mobile app. If a sales person submits a PE and no row matches (sales_person, company, mode_of_payment) here, the API returns 400 — every sales person must be configured for every mode they will use."
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-10-13 12:46:06.978467",
+ "modified": "2026-05-25 19:30:00.000000",
  "modified_by": "Administrator",
  "module": "Field Sales",
  "name": "Chundakadan Settings",

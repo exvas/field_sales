@@ -2067,19 +2067,26 @@ def create_sales_order():
 
 @frappe.whitelist()
 def get_sales_orders_with_details(sales_person_id=None):
-    if not sales_person_id:
+    # View-All Transaction Role bypass: a manager configured under
+    # Chundakadan Settings.view_all_transaction_role gets every Sales
+    # Order on mobile regardless of which sales person is asking.
+    bypass = _caller_has_view_all_role()
+
+    if not bypass and not sales_person_id:
         return {
             "status": "error",
             "message": "Sales Person ID is required"
         }
 
+    filters = {"docstatus": ["in", [0, 1]]}
+    if not bypass:
+        filters["custom_sales_person"] = sales_person_id
+
     sales_order_names = frappe.get_all(
         "Sales Order",
-        filters={
-            "custom_sales_person": sales_person_id,
-            "docstatus": ["in", [0, 1]]
-        },
-        pluck="name"
+        filters=filters,
+        order_by="modified desc",
+        pluck="name",
     )
 
     sales_orders = []
@@ -2255,16 +2262,21 @@ def pay_sales_invoice():
             "code": 400
         }
 
-    paid_to = frappe.db.get_value("Mode of Payment Account", {
-        "parent": mode_of_payment,
-        "company": invoice.company
-    }, "default_account")
+    # Sales-Person-specific MOP override configured in
+    # Chundakadan Settings.mop_mapping. Hard 400 if not configured —
+    # every (sales_person, company, mode) tuple must be explicit.
+    caller_sp = _resolve_caller_sales_person()
+    paid_to = _resolve_mop_account(caller_sp, invoice.company, mode_of_payment)
 
     if not paid_to:
         return {
             "status": "error",
-            "message": f"Account not found for Mode of Payment '{mode_of_payment}' in company '{invoice.company}'",
-            "code": 400
+            "message": (
+                f"No Chundakadan Settings.mop_mapping row for "
+                f"sales_person='{caller_sp}', company='{invoice.company}', "
+                f"mode_of_payment='{mode_of_payment}'. Ask an admin to add the row."
+            ),
+            "code": 400,
         }
 
     payment_entry_data = {
@@ -2474,19 +2486,32 @@ def create_payment_entry_from_sales_invoices():
         if not reference_no or not reference_date:
             frappe.throw(_("Reference No and Reference Date are required for Cheque or Bank Transfer payments."))
 
+    # Resolve company (Employee.company -> Settings.default_company -> first Company)
+    company = _resolve_company_for_caller()
+
+    # Sales-Person-specific MOP override configured in
+    # Chundakadan Settings.mop_mapping. Hard 400 if not configured.
+    caller_sp = _resolve_caller_sales_person() or data.get("sales_person")
+    paid_to = _resolve_mop_account(caller_sp, company, mode_of_payment)
+    if not paid_to:
+        frappe.throw(_(
+            "No Chundakadan Settings.mop_mapping row for "
+            "sales_person='{0}', company='{1}', mode_of_payment='{2}'. "
+            "Ask an admin to add the row."
+        ).format(caller_sp, company, mode_of_payment))
+
     pe = frappe.new_doc("Payment Entry")
     pe.payment_type = "Receive"
     pe.party_type = "Customer"
     pe.party = customer
     pe.posting_date = now()
+    pe.company = company
     pe.custom_sales_person = data.get("sales_person")
     pe.mode_of_payment = mode_of_payment
     pe.paid_amount = total_allocated_amount
     pe.received_amount = total_allocated_amount
     pe.target_exchange_rate = 1
-    pe.paid_to = frappe.get_value("Mode of Payment Account", {
-        "parent": mode_of_payment
-    }, "default_account")
+    pe.paid_to = paid_to
 
     if mode_of_payment in ["Cheque", "Bank Draft"]:
         pe.reference_no = reference_no
@@ -3538,6 +3563,51 @@ def _resolve_caller_sales_person():
     return sales_person
 
 
+def _caller_has_view_all_role():
+    """True if the session user holds the Role configured in
+    Chundakadan Settings -> view_all_transaction_role.
+
+    Used by mobile list endpoints to bypass the per-sales-person filter
+    for managers who need cross-team visibility. Returns False when the
+    setting is blank (the default — no override).
+    """
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return False
+    if user == "Administrator":
+        return True
+    role = frappe.db.get_single_value("Chundakadan Settings", "view_all_transaction_role")
+    if not role:
+        return False
+    return role in frappe.get_roles(user)
+
+
+def _resolve_mop_account(sales_person, company, mode_of_payment):
+    """Look up the Sales-Person-specific paid_to Account configured in
+    Chundakadan Settings.mop_mapping.
+
+    Returns the Account name or None. Caller MUST hard-fail (400) when
+    None — per product decision, every (sales_person, company, mode)
+    tuple in use must be explicitly mapped.
+
+    Stored as a child table on the Chundakadan Settings singleton, so we
+    query tabChundakadan Sales Person MOP directly with parent locked.
+    """
+    if not (sales_person and company and mode_of_payment):
+        return None
+    return frappe.db.get_value(
+        "Chundakadan Sales Person MOP",
+        {
+            "parent": "Chundakadan Settings",
+            "parenttype": "Chundakadan Settings",
+            "sales_person": sales_person,
+            "company": company,
+            "mode_of_payment": mode_of_payment,
+        },
+        "account",
+    )
+
+
 def _resolve_company_for_caller():
     """3-layer fallback for the calling user's company.
 
@@ -3654,6 +3724,12 @@ def get_quotations_with_details(sales_person_id=None, status_filter=None):
         if sales_person_id and caller_sp and sales_person_id != caller_sp:
             return response("You can only view your own quotations", None, False, 403)
         effective_sp = sales_person_id or caller_sp
+
+        # View-All bypass: managers configured under
+        # Chundakadan Settings.view_all_transaction_role drop into the
+        # "no scope" branch below (which returns every quotation).
+        if _caller_has_view_all_role():
+            effective_sp = None
 
         valid_statuses = {"Draft", "Submitted", "Open", "Lost", "Ordered", "Expired"}
         if status_filter and status_filter not in valid_statuses:
