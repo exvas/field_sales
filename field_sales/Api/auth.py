@@ -3604,27 +3604,37 @@ def _caller_has_view_all_role():
     role = frappe.db.get_single_value("Chundakadan Settings", "view_all_transaction_role")
     if role and role in frappe.get_roles(user):
         return True
-    # Managers configured directly in manager_details
+    # Manager rows resolve via Employee, mirroring the Sales Person chain:
+    # frappe.session.user -> Employee.user_id -> Manager Detail.employee
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    if not employee:
+        return False
     return bool(frappe.db.exists("Chundakadan Manager Detail", {
         "parent": "Chundakadan Settings",
         "parenttype": "Chundakadan Settings",
-        "user": user,
+        "employee": employee,
     }))
 
 
 def _caller_manager_flags():
     """Return (allow_edit, allow_submit, workflow_approval) for the caller
     from Chundakadan Settings -> manager_details, or (False, False, False)
-    if the user is not a manager."""
+    if the user is not a manager.
+
+    Resolves via Employee.user_id, same as _resolve_caller_sales_person.
+    """
     user = frappe.session.user
     if not user or user == "Guest":
+        return (False, False, False)
+    employee = frappe.db.get_value("Employee", {"user_id": user}, "name")
+    if not employee:
         return (False, False, False)
     row = frappe.db.get_value(
         "Chundakadan Manager Detail",
         {
             "parent": "Chundakadan Settings",
             "parenttype": "Chundakadan Settings",
-            "user": user,
+            "employee": employee,
         },
         ["allow_edit", "allow_submit", "workflow_approval"],
         as_dict=True,

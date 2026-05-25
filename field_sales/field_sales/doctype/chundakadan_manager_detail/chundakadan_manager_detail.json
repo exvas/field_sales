@@ -5,20 +5,21 @@
  "editable_grid": 1,
  "engine": "InnoDB",
  "field_order": [
-  "user",
+  "employee",
   "allow_edit",
   "allow_submit",
   "workflow_approval"
  ],
  "fields": [
   {
-   "fieldname": "user",
+   "fieldname": "employee",
    "fieldtype": "Link",
    "in_list_view": 1,
-   "label": "User",
-   "options": "User",
+   "label": "Employee",
+   "options": "Employee",
    "reqd": 1,
-   "columns": 5
+   "columns": 5,
+   "description": "Resolved on mobile via frappe.session.user → Employee.user_id → this row. Matches how Sales Person rows in the MOP table are resolved."
   },
   {
    "default": "0",
