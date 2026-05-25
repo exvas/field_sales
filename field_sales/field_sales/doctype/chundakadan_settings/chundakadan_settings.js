@@ -41,12 +41,11 @@ frappe.ui.form.on('Chundakadan Sales Person MOP', {
         // no default account is configured.
         const row = locals[cdt][cdn];
         if (!row.mode_of_payment || !row.company) return;
-        frappe.db.get_value(
-            'Mode of Payment Account',
-            { parent: row.mode_of_payment, company: row.company },
-            'default_account'
-        ).then((r) => {
-            const acct = r && r.message && r.message.default_account;
+        frappe.call({
+            method: 'field_sales.Api.auth.get_mop_default_account',
+            args: { mode_of_payment: row.mode_of_payment, company: row.company },
+        }).then((r) => {
+            const acct = r && r.message;
             if (acct && !row.account) {
                 frappe.model.set_value(cdt, cdn, 'account', acct);
             }
@@ -61,12 +60,11 @@ frappe.ui.form.on('Chundakadan Sales Person MOP', {
             frappe.model.set_value(cdt, cdn, 'account', '');
         }
         if (row.mode_of_payment && row.company) {
-            frappe.db.get_value(
-                'Mode of Payment Account',
-                { parent: row.mode_of_payment, company: row.company },
-                'default_account'
-            ).then((r) => {
-                const acct = r && r.message && r.message.default_account;
+            frappe.call({
+                method: 'field_sales.Api.auth.get_mop_default_account',
+                args: { mode_of_payment: row.mode_of_payment, company: row.company },
+            }).then((r) => {
+                const acct = r && r.message;
                 if (acct) frappe.model.set_value(cdt, cdn, 'account', acct);
             });
         }

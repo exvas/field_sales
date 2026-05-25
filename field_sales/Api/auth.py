@@ -3563,6 +3563,30 @@ def _resolve_caller_sales_person():
     return sales_person
 
 
+@frappe.whitelist()
+def get_mop_default_account(mode_of_payment=None, company=None):
+    """Whitelisted helper for the Chundakadan Settings client script.
+
+    JS calling frappe.db.get_value('Mode of Payment Account', ...) hits
+    check_parent_permission and throws 'Not permitted' even for System
+    Manager because Mode of Payment Account is a child DocType. This
+    helper gates on the caller having write access to Chundakadan
+    Settings (anyone editing the MOP grid does) and runs the lookup
+    with ignore_permissions=True.
+
+    Returns the default_account string or None when no row matches.
+    """
+    if not frappe.has_permission("Chundakadan Settings", "write"):
+        frappe.throw(_("You do not have permission to read Chundakadan Settings."))
+    if not (mode_of_payment and company):
+        return None
+    return frappe.db.get_value(
+        "Mode of Payment Account",
+        {"parent": mode_of_payment, "company": company},
+        "default_account",
+    )
+
+
 def _caller_has_view_all_role():
     """True if the session user holds the Role configured in
     Chundakadan Settings -> view_all_transaction_role, OR appears as a
