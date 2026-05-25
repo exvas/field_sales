@@ -3216,22 +3216,73 @@ def create_task(
 
 @frappe.whitelist(allow_guest=True)
 def get_task_details():
+    """Return tasks assigned to the calling sales person.
+
+    Picks up BOTH assignment paths so the desk team can use whichever
+    workflow they prefer without losing visibility on mobile:
+
+      1. The custom Link field `Task.custom_assigned_to` -> Sales Person.
+         (Old workflow — admin picks the sales person directly on the
+         Task form.)
+      2. Frappe's standard "Assign To" sidebar, which writes the user's
+         email into `Task._assign` (JSON list) AND creates a ToDo row.
+         We resolve the sales person -> Employee -> user_id and check
+         for membership in _assign.
+
+    Until this was extended, tasks assigned only via the sidebar (with
+    custom_assigned_to left blank) were invisible to mobile — which is
+    exactly what was happening on this bench.
+    """
     try:
         sa = frappe.form_dict.get("sales_person")
-        if not sa :
-            return{
-                "status":"error",
-                "message":"sales person isrequired",
-                "code":400
+        if not sa:
+            return {
+                "status": "error",
+                "message": "sales person is required",
+                "code": 400,
             }
+
+        # Path 1: custom_assigned_to Link match.
+        names_link = set(
+            frappe.get_all("Task", filters={"custom_assigned_to": sa}, pluck="name")
+        )
+
+        # Path 2: standard "Assign To" sidebar — find the user_id behind
+        # this sales person, then look for it inside Task._assign.
+        names_assign = set()
+        employee = frappe.db.get_value("Sales Person", sa, "employee")
+        user_id = (
+            frappe.db.get_value("Employee", employee, "user_id") if employee else None
+        )
+        if user_id:
+            names_assign = set(
+                frappe.db.sql_list(
+                    """
+                    SELECT name FROM `tabTask`
+                    WHERE _assign LIKE %(needle)s
+                    """,
+                    {"needle": f'%"{user_id}"%'},
+                )
+            )
+
+        all_names = list(names_link | names_assign)
+        if not all_names:
+            return {
+                "status": "success",
+                "message": "task details retrieved",
+                "data": [],
+                "code": 200,
+            }
+
         docs = frappe.get_all(
             "Task",
+            filters={"name": ["in", all_names]},
             fields=[
-                'name', 'subject', 'status',
-                'custom_customer', 'custom_assigned_to',
-                'exp_start_date', 'exp_end_date', 'description',"custom_remarks"
+                "name", "subject", "status",
+                "custom_customer", "custom_assigned_to",
+                "exp_start_date", "exp_end_date", "description", "custom_remarks",
             ],
-            filters={"custom_assigned_to":sa}
+            order_by="modified desc",
         )
 
         for d in docs:
@@ -3243,7 +3294,7 @@ def get_task_details():
             "status": "success",
             "message": "task details retrieved",
             "data": docs,
-            "code": 200
+            "code": 200,
         }
 
     except Exception as e:
@@ -3251,7 +3302,7 @@ def get_task_details():
         return {
             "status": "error",
             "message": str(e),
-            "http_status_code": 500
+            "http_status_code": 500,
         }
 
 @frappe.whitelist(allow_guest=True)
