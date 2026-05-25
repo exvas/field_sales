@@ -3565,7 +3565,8 @@ def _resolve_caller_sales_person():
 
 def _caller_has_view_all_role():
     """True if the session user holds the Role configured in
-    Chundakadan Settings -> view_all_transaction_role.
+    Chundakadan Settings -> view_all_transaction_role, OR appears as a
+    Manager in Chundakadan Settings -> manager_details.
 
     Used by mobile list endpoints to bypass the per-sales-person filter
     for managers who need cross-team visibility. Returns False when the
@@ -3577,9 +3578,62 @@ def _caller_has_view_all_role():
     if user == "Administrator":
         return True
     role = frappe.db.get_single_value("Chundakadan Settings", "view_all_transaction_role")
-    if not role:
-        return False
-    return role in frappe.get_roles(user)
+    if role and role in frappe.get_roles(user):
+        return True
+    # Managers configured directly in manager_details
+    return bool(frappe.db.exists("Chundakadan Manager Detail", {
+        "parent": "Chundakadan Settings",
+        "parenttype": "Chundakadan Settings",
+        "user": user,
+    }))
+
+
+def _caller_manager_flags():
+    """Return (allow_edit, allow_submit, workflow_approval) for the caller
+    from Chundakadan Settings -> manager_details, or (False, False, False)
+    if the user is not a manager."""
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return (False, False, False)
+    row = frappe.db.get_value(
+        "Chundakadan Manager Detail",
+        {
+            "parent": "Chundakadan Settings",
+            "parenttype": "Chundakadan Settings",
+            "user": user,
+        },
+        ["allow_edit", "allow_submit", "workflow_approval"],
+        as_dict=True,
+    )
+    if not row:
+        return (False, False, False)
+    return (bool(row.allow_edit), bool(row.allow_submit), bool(row.workflow_approval))
+
+
+def _resolve_sales_person_defaults(sales_person, company=None):
+    """Look up per-sales-person defaults (warehouse, cost_center, price_list,
+    default_mode_of_payment) from Chundakadan Settings -> sales_person_details.
+
+    Returns a frappe._dict (possibly empty) so callers can do .get() without
+    None-checks. If company is provided, prefers the row matching that
+    company; otherwise returns the first row for the sales person.
+    """
+    if not sales_person:
+        return frappe._dict()
+    filters = {
+        "parent": "Chundakadan Settings",
+        "parenttype": "Chundakadan Settings",
+        "sales_person": sales_person,
+    }
+    if company:
+        filters["company"] = company
+    fields = ["warehouse", "cost_center", "price_list", "default_mode_of_payment", "company"]
+    row = frappe.db.get_value("Chundakadan Sales Person Detail", filters, fields, as_dict=True)
+    if not row and company:
+        # Fall back to any row for this sales person if the company-specific one is missing.
+        filters.pop("company")
+        row = frappe.db.get_value("Chundakadan Sales Person Detail", filters, fields, as_dict=True)
+    return frappe._dict(row or {})
 
 
 def _resolve_mop_account(sales_person, company, mode_of_payment):

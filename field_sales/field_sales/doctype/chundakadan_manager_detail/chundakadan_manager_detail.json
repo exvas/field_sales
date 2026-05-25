@@ -1,0 +1,63 @@
+{
+ "actions": [],
+ "creation": "2026-05-25 19:50:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "allow_edit",
+  "allow_submit",
+  "workflow_approval"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1,
+   "columns": 5
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_edit",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Allow Edit",
+   "columns": 2,
+   "description": "Manager can edit submitted transactions of any sales person."
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_submit",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Allow Submit",
+   "columns": 2
+  },
+  {
+   "default": "0",
+   "fieldname": "workflow_approval",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Workflow Approval",
+   "columns": 2
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-25 19:50:00.000000",
+ "modified_by": "Administrator",
+ "module": "Field Sales",
+ "name": "Chundakadan Manager Detail",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
