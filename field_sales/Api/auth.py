@@ -1653,30 +1653,32 @@ def user_login(usr, pwd, device_id=None):
         employee_name = ""
         sales_person_id = ""
 
-        # ✅ Check if user has "Sales Person" role before proceeding
-        if "Sales Person" not in roles:
-            frappe.local.response["message"] = {
-                "success_key": 0,
-                "message": "Access denied! You do not have the Sales Person role assigned.",
-            }
-            frappe.local.response.http_status_code = 403
-            return
-
-        # ✅ Now fetch sales person ID if the role exists
+        # Gate on the Employee record — anyone in HR can log in.
+        # The mobile shows HR tiles (Leaves, Payslips, Attendance, Expenses)
+        # to all employees and hides sales tiles when sales_person_id is
+        # empty. Pure portal/website users without an Employee record
+        # stay blocked.
         emp = frappe.db.get_value(
             "Employee",
             {"user_id": user.name},
             ["name", "employee_name"],
-            as_dict=True
+            as_dict=True,
         )
-        if emp:
-            employee_id = emp.name
-            employee_name = emp.employee_name
-            sales_person_id = frappe.db.get_value(
-                "Sales Person",
-                {"employee": emp.name},
-                "name"
-            ) or ""
+        if not emp:
+            frappe.local.response["message"] = {
+                "success_key": 0,
+                "message": "Access denied. This account is not linked to an Employee record.",
+            }
+            frappe.local.response.http_status_code = 403
+            return
+
+        employee_id = emp.name
+        employee_name = emp.employee_name
+        sales_person_id = frappe.db.get_value(
+            "Sales Person",
+            {"employee": emp.name},
+            "name",
+        ) or ""
 
         frappe.response["message"] = {
             "success_key": 1,
