@@ -110,11 +110,11 @@
   },
   {
    "fieldname": "annual_leave_policy",
-   "fieldtype": "Table",
+   "fieldtype": "Link",
+   "options": "Leave Policy",
    "label": "Annual Leave Policy",
-   "options": "Chundakadan Annual Leave Policy",
    "depends_on": "auto_allocate_annual_leaves",
-   "description": "One row per Leave Type with the entitlement (days/year) and whether unused balance carries forward. Drives both the yearly cron AND the per-Employee 'Allocate Annual Leaves' HR Action."
+   "description": "Standard ERPNext Leave Policy whose Leave Policy Detail rows (leave_type + annual_allocation) drive the auto-allocator and the per-Employee 'Allocate Annual Leaves' HR Action. Reuses /app/leave-policy so HR maintains one source of truth."
   }
  ],
  "grid_page_length": 50,
