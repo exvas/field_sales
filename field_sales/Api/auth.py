@@ -3885,6 +3885,7 @@ def get_quotations_with_details(sales_person_id=None, status_filter=None):
                 "name": doc.name,
                 "customer": doc.get("party_name"),
                 "customer_name": doc.get("customer_name"),
+                "custom_sales_person": doc.get("custom_sales_person") or "",
                 "transaction_date": doc.transaction_date,
                 "valid_till": doc.valid_till,
                 "status": doc.status,
