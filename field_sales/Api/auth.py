@@ -5256,27 +5256,40 @@ def create_leave_application(
 @frappe.whitelist()
 def get_pending_leave_approvals():
     """List Leave Applications awaiting the calling user's approval.
-    Filter: leave_approver = session user (frappe User name = Employee.leave_approver),
-    status = Open, docstatus = 1.
+
+    Uses chundakadan's multi-step chain (current_approver field on
+    Leave Application, populated by chundakadan.chundakadan.api.leave.
+    generate_approval_flow). Falls back to the standard leave_approver
+    field for leaves created before the multi-step flow was wired.
+
+    Status filter: Open OR Pending (chundakadan flow keeps doc Open
+    while moving through the chain; standard sets it to Open while
+    waiting on leave_approver). docstatus: 0 (drafts mid-flow) or 1.
     """
     try:
         user = frappe.session.user
         if not user or user == "Guest":
             return response("Authentication required", None, False, 401)
 
-        rows = frappe.get_all(
-            "Leave Application",
-            filters={
-                "leave_approver": user,
-                "status": "Open",
-                "docstatus": 1,
-            },
-            fields=[
-                "name", "employee", "employee_name", "leave_type",
-                "from_date", "to_date", "half_day", "total_leave_days",
-                "description", "posting_date",
-            ],
-            order_by="from_date asc",
+        # Multi-step chain: current_approver is the caller AND status
+        # hasn't been finalized.
+        rows = frappe.db.sql(
+            """
+            SELECT name, employee, employee_name, leave_type,
+                   from_date, to_date, half_day, total_leave_days,
+                   description, posting_date,
+                   current_approver, leave_approver,
+                   custom_approval_status, status
+            FROM `tabLeave Application`
+            WHERE (current_approver = %(user)s OR
+                   (current_approver IS NULL AND leave_approver = %(user)s))
+              AND docstatus IN (0, 1)
+              AND COALESCE(custom_approval_status, '') NOT IN ('Approved', 'Rejected')
+              AND status IN ('Open', 'Pending')
+            ORDER BY from_date ASC
+            """,
+            {"user": user},
+            as_dict=True,
         )
         return response(
             "Pending approvals",
@@ -5291,8 +5304,13 @@ def get_pending_leave_approvals():
 
 @frappe.whitelist(methods=["POST"])
 def act_on_leave_application(name=None, action=None, reason=None):
-    """Approve or reject a Leave Application. Caller must be the doc's
-    leave_approver. `action` must be 'Approved' or 'Rejected'."""
+    """Approve or reject a Leave Application via chundakadan's multi-step
+    workflow. action must be 'Approved' or 'Rejected'.
+
+    Delegates to chundakadan.chundakadan.api.leave.approve_leave /
+    reject_leave so the chain advances correctly: an Approved click at
+    step 1 routes the doc to step 2, not straight to final Approved.
+    """
     try:
         data = frappe.request.get_json() or {}
         name = name or data.get("name")
@@ -5304,35 +5322,53 @@ def act_on_leave_application(name=None, action=None, reason=None):
         if not name:
             return response("name is required", None, False, 400)
 
-        user = frappe.session.user
-        doc = frappe.get_doc("Leave Application", name)
-        if doc.leave_approver and doc.leave_approver != user:
-            return response(
-                "You are not the leave approver for this application",
-                None,
-                False,
-                403,
+        # Delegate to chundakadan's chain-aware handlers. They do their
+        # own authorization checks (current_approver match) and throw
+        # frappe.PermissionError if the caller is not the right approver.
+        try:
+            from chundakadan.chundakadan.api.leave import (
+                approve_leave as _approve,
+                reject_leave as _reject,
             )
-
-        # The approval flow in ERPNext: set status, then save. If the doc
-        # was Submitted (docstatus=1), we update via db_set + run_method
-        # to fire downstream side-effects (leave ledger entries, etc.).
-        if doc.docstatus == 1:
+            if action == "Approved":
+                _approve(name)
+            else:
+                _reject(name, remarks=reason)
+        except ImportError:
+            # chundakadan not installed (shouldn't happen on this bench)
+            # — fall back to the old single-step behaviour.
+            doc = frappe.get_doc("Leave Application", name)
+            user = frappe.session.user
+            if doc.leave_approver and doc.leave_approver != user:
+                return response(
+                    "You are not the leave approver for this application",
+                    None,
+                    False,
+                    403,
+                )
             doc.status = action
             if reason:
                 doc.description = (doc.description or "") + "\n\n[Approver note] " + reason
-            doc.save(ignore_permissions=True)
-        else:
-            # Draft: submit with the chosen status.
-            doc.status = action
-            doc.submit()
+            if doc.docstatus == 1:
+                doc.save(ignore_permissions=True)
+            else:
+                doc.submit()
 
+        # Re-read for the response so the client sees the post-action state
+        doc = frappe.get_doc("Leave Application", name)
         return response(
             "Leave {}".format(action.lower()),
-            {"name": doc.name, "status": doc.status},
+            {
+                "name": doc.name,
+                "status": doc.status,
+                "custom_approval_status": doc.get("custom_approval_status"),
+                "current_approver": doc.get("current_approver"),
+            },
             True,
             200,
         )
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not authorized", None, False, 403)
     except frappe.DoesNotExistError:
         return response("Leave Application not found", None, False, 404)
     except Exception as e:
