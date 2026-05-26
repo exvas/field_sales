@@ -1,0 +1,55 @@
+{
+ "actions": [],
+ "creation": "2026-05-26 14:30:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "leave_type",
+  "days_per_year",
+  "carry_forward"
+ ],
+ "fields": [
+  {
+   "fieldname": "leave_type",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Leave Type",
+   "options": "Leave Type",
+   "reqd": 1,
+   "columns": 5
+  },
+  {
+   "fieldname": "days_per_year",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "Days Per Year",
+   "reqd": 1,
+   "columns": 3,
+   "non_negative": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "carry_forward",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Carry Forward",
+   "columns": 3,
+   "description": "Tick to carry forward unused balance to the next year."
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-05-26 14:30:00.000000",
+ "modified_by": "Administrator",
+ "module": "Field Sales",
+ "name": "Chundakadan Annual Leave Policy",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

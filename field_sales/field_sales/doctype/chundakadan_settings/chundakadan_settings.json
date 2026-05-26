@@ -15,7 +15,11 @@
   "section_mop_mapping",
   "mop_mapping",
   "section_manager_details",
-  "manager_details"
+  "manager_details",
+  "section_annual_leaves",
+  "auto_allocate_annual_leaves",
+  "annual_allocation_run_date",
+  "annual_leave_policy"
  ],
  "fields": [
   {
@@ -84,6 +88,33 @@
    "label": "Manager Details",
    "options": "Chundakadan Manager Detail",
    "description": "Users in this table get manager privileges in the mobile app: view all sales persons' transactions, and (per-flag) edit/submit/approve them. Use this for area sales managers and admins who need oversight without owning a Sales Person record."
+  },
+  {
+   "fieldname": "section_annual_leaves",
+   "fieldtype": "Section Break",
+   "label": "Annual Leave Auto-Allocation"
+  },
+  {
+   "default": "0",
+   "fieldname": "auto_allocate_annual_leaves",
+   "fieldtype": "Check",
+   "label": "Auto-Allocate Annual Leaves",
+   "description": "When ON, a daily scheduler checks the Run Date below and, on the matching day each year, creates Leave Allocation rows for every Active Employee per the policy rows below."
+  },
+  {
+   "fieldname": "annual_allocation_run_date",
+   "fieldtype": "Date",
+   "label": "Annual Allocation Run Date",
+   "depends_on": "auto_allocate_annual_leaves",
+   "description": "Day-of-year the auto-allocation fires. Set to the fiscal-year start (e.g. April 1 for India). The year part is ignored — only month + day matter."
+  },
+  {
+   "fieldname": "annual_leave_policy",
+   "fieldtype": "Table",
+   "label": "Annual Leave Policy",
+   "options": "Chundakadan Annual Leave Policy",
+   "depends_on": "auto_allocate_annual_leaves",
+   "description": "One row per Leave Type with the entitlement (days/year) and whether unused balance carries forward. Drives both the yearly cron AND the per-Employee 'Allocate Annual Leaves' HR Action."
   }
  ],
  "grid_page_length": 50,
