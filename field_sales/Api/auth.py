@@ -4593,12 +4593,21 @@ def _resolve_caller_employee():
 
 @frappe.whitelist()
 def get_leave_types():
-    """List active Leave Types for use in the Apply Leave form."""
+    """List active Leave Types for use in the Apply Leave form.
+    Includes custom_require_certificate so the mobile can show the
+    certificate uploader as required for Sick Leave (etc.) without an
+    extra round trip."""
     try:
         types = frappe.get_all(
             "Leave Type",
             filters={"is_lwp": 0},
-            fields=["name", "leave_type_name", "max_leaves_allowed", "is_compensatory"],
+            fields=[
+                "name",
+                "leave_type_name",
+                "max_leaves_allowed",
+                "is_compensatory",
+                "custom_require_certificate",
+            ],
             order_by="name",
         )
         return response("Leave types", types, True, 200)
@@ -5188,8 +5197,16 @@ def create_leave_application(
     half_day=0,
     half_day_date=None,
     description=None,
+    medical_certificate=None,
 ):
-    """Create + submit a Leave Application for the calling user."""
+    """Create + submit a Leave Application for the calling user.
+
+    medical_certificate, when provided, is a file URL returned by
+    Frappe's /api/method/upload_file endpoint (e.g. /private/files/abc.pdf).
+    Required when the selected Leave Type has custom_require_certificate
+    flagged — chundakadan.chundakadan.api.leave.validate_leave enforces
+    that on save; we just pass the URL through here.
+    """
     try:
         data = frappe.request.get_json() or {}
         leave_type = leave_type or data.get("leave_type")
@@ -5198,6 +5215,7 @@ def create_leave_application(
         half_day = half_day if half_day else data.get("half_day", 0)
         half_day_date = half_day_date or data.get("half_day_date")
         description = description or data.get("description")
+        medical_certificate = medical_certificate or data.get("medical_certificate")
 
         if not (leave_type and from_date and to_date):
             return response(
@@ -5223,6 +5241,8 @@ def create_leave_application(
         if doc.half_day and half_day_date:
             doc.half_day_date = frappe.utils.getdate(half_day_date)
         doc.description = description or ""
+        if medical_certificate:
+            doc.custom_medical_certificate = medical_certificate
         if leave_approver:
             doc.leave_approver = leave_approver
         doc.status = "Open"
