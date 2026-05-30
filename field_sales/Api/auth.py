@@ -5248,15 +5248,12 @@ def create_leave_application(
             doc.leave_approver = leave_approver
         doc.status = "Open"
         doc.insert(ignore_permissions=True)
-        try:
-            doc.submit()
-        except Exception:
-            # Some installs auto-submit via workflow; some require explicit submit.
-            # If submit fails (workflow rule), leave as Draft and let user know.
-            frappe.log_error(
-                frappe.get_traceback(),
-                "field_sales.create_leave_application.submit",
-            )
+        # Do NOT auto-submit. chundakadan's multi-step chain advances
+        # the doc while it stays at docstatus=0 (Draft). The final
+        # approver's click in chundakadan.api.leave.approve_leave is
+        # what actually submits, which is when leave balance is
+        # consumed and the doc becomes immutable. Until then it can be
+        # rerouted, edited, or rejected without leaking ledger entries.
 
         return response(
             "Leave Application created",
