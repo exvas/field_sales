@@ -4279,13 +4279,15 @@ def get_print_pdf(doctype=None, name=None, print_format=None, letterhead=None):
 
         # Try PDF generation first (requires wkhtmltopdf)
         try:
+            # frappe.get_print() doesn't accept ignore_permissions — was
+            # silently throwing TypeError before the fallback could even
+            # produce a useful HTML response. Standard role perms apply.
             pdf_binary = frappe.get_print(
                 doctype,
                 name,
                 print_format=print_format,
                 letterhead=letterhead,
                 as_pdf=True,
-                ignore_permissions=True,
             )
             if not pdf_binary:
                 raise Exception("Empty PDF output")
@@ -4308,7 +4310,6 @@ def get_print_pdf(doctype=None, name=None, print_format=None, letterhead=None):
                 name,
                 print_format=print_format,
                 letterhead=letterhead,
-                ignore_permissions=True,
             )
             if not html_string:
                 return response("Failed to generate print content", None, False, 500)
