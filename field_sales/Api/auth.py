@@ -4336,6 +4336,95 @@ def get_my_recent_payment_entries(
 
 
 @frappe.whitelist()
+def get_my_bounced_cheques(limit=100, from_date=None, to_date=None):
+    """List the caller's bounced cheques. Filters Payment Entry on the
+    chundakadan custom_check_bounce=1 flag (the same field powering the
+    desk "Cheque Bounce" report). Submitted docs only — bounce is a
+    post-clearance status, never set on Draft.
+
+    Optional filters:
+      - from_date / to_date: posting_date bounds (inclusive)
+
+    Returns each PE plus its first Sales Invoice reference so the mobile
+    can show "vs which invoice" without a second round-trip.
+    """
+    try:
+        caller_sp = _resolve_caller_sales_person()
+        if not caller_sp:
+            return response("No Sales Person linked to your account", None, False, 404)
+        try:
+            limit_n = int(limit) if limit else 100
+        except (TypeError, ValueError):
+            limit_n = 100
+
+        filters = {
+            "custom_sales_person": caller_sp,
+            "docstatus": 1,
+            "custom_check_bounce": 1,
+        }
+        if from_date and to_date:
+            filters["posting_date"] = ["between", [from_date, to_date]]
+        elif from_date:
+            filters["posting_date"] = [">=", from_date]
+        elif to_date:
+            filters["posting_date"] = ["<=", to_date]
+
+        rows = frappe.get_all(
+            "Payment Entry",
+            filters=filters,
+            fields=[
+                "name", "posting_date", "paid_amount",
+                "party", "party_name", "reference_no", "reference_date",
+                "mode_of_payment",
+            ],
+            order_by="posting_date desc",
+            limit=limit_n,
+        )
+
+        # Tack on the first Sales Invoice reference for each PE (cheap;
+        # one query, IN clause). Sales people want to know which bill
+        # the bounced cheque was meant to clear.
+        if rows:
+            pe_names = [r["name"] for r in rows]
+            refs = frappe.db.sql(
+                """
+                SELECT per.parent, per.reference_name, per.allocated_amount
+                FROM `tabPayment Entry Reference` per
+                WHERE per.parent IN %(names)s
+                  AND per.reference_doctype = 'Sales Invoice'
+                ORDER BY per.idx ASC
+                """,
+                {"names": tuple(pe_names)},
+                as_dict=True,
+            )
+            first_ref = {}
+            for r in refs:
+                first_ref.setdefault(r["parent"], r)
+            total_bounced = 0.0
+            for r in rows:
+                ref = first_ref.get(r["name"])
+                r["sales_invoice"] = ref["reference_name"] if ref else None
+                r["allocated_amount"] = ref["allocated_amount"] if ref else 0
+                total_bounced += float(r.get("paid_amount") or 0)
+        else:
+            total_bounced = 0.0
+
+        return response(
+            "My bounced cheques",
+            {
+                "entries": rows,
+                "count": len(rows),
+                "total_amount": total_bounced,
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_bounced_cheques")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
 def get_payment_entry_details(name=None):
     """Full details for one Payment Entry — header fields + reference rows
     (Sales Invoice / Sales Order allocations). Powers the mobile detail
