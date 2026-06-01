@@ -4430,50 +4430,82 @@ def get_payment_entry_details(name=None):
     (Sales Invoice / Sales Order allocations). Powers the mobile detail
     sheet that opens when a user taps a row in "My Recent Payment
     Entries". Callers must be the sales person who owns the doc.
+
+    NOTE: uses db.get_value + raw SQL instead of frappe.get_doc because
+    mobile users (Sales User role) typically lack read permission on the
+    Payment Entry DocType — frappe.get_doc would throw PermissionError
+    → HTTP 417. We have our own custom_sales_person == caller gate, so
+    bypassing standard role perms is correct here (mirrors the
+    get_mop_default_account pattern).
     """
     try:
         if not name:
             return response("name is required", None, False, 400)
-        if not frappe.db.exists("Payment Entry", name):
+
+        # Fetch header via db.get_value — bypasses doctype-level role check.
+        pe = frappe.db.get_value(
+            "Payment Entry",
+            name,
+            [
+                "name", "docstatus", "posting_date", "party", "party_name",
+                "mode_of_payment", "paid_amount", "received_amount",
+                "reference_no", "reference_date", "remarks",
+                "total_allocated_amount", "unallocated_amount",
+                "custom_sales_person",
+            ],
+            as_dict=True,
+        )
+        if not pe:
             return response("Payment Entry not found", None, False, 404)
 
-        doc = frappe.get_doc("Payment Entry", name)
-
-        # Permission gate: caller must be the sales person who owns this
-        # PE (or Administrator). custom_sales_person was set on create.
+        # Permission gate: caller must own this PE (or Administrator).
         caller_sp = _resolve_caller_sales_person()
-        owner_sp = doc.get("custom_sales_person")
+        owner_sp = pe.get("custom_sales_person")
         if frappe.session.user != "Administrator" and (
             not caller_sp or caller_sp != owner_sp
         ):
             return response("Not your Payment Entry", None, False, 403)
 
-        refs = []
-        for r in (doc.get("references") or []):
-            refs.append({
+        # Fetch reference rows via raw SQL — child DocType reads via the
+        # client API would hit check_parent_permission (gotcha #3).
+        ref_rows = frappe.db.sql(
+            """
+            SELECT reference_doctype, reference_name, total_amount,
+                   outstanding_amount, allocated_amount, due_date
+            FROM `tabPayment Entry Reference`
+            WHERE parent = %s
+            ORDER BY idx ASC
+            """,
+            (name,),
+            as_dict=True,
+        )
+        refs = [
+            {
                 "reference_doctype": r.get("reference_doctype"),
                 "reference_name": r.get("reference_name"),
                 "total_amount": r.get("total_amount") or 0,
                 "outstanding_amount": r.get("outstanding_amount") or 0,
                 "allocated_amount": r.get("allocated_amount") or 0,
                 "due_date": r.get("due_date"),
-            })
+            }
+            for r in (ref_rows or [])
+        ]
 
         payload = {
-            "name": doc.name,
-            "docstatus": doc.docstatus,
-            "status": "Submitted" if doc.docstatus == 1 else "Draft",
-            "posting_date": doc.get("posting_date"),
-            "party": doc.get("party"),
-            "party_name": doc.get("party_name"),
-            "mode_of_payment": doc.get("mode_of_payment"),
-            "paid_amount": doc.get("paid_amount") or 0,
-            "received_amount": doc.get("received_amount") or 0,
-            "reference_no": doc.get("reference_no"),
-            "reference_date": doc.get("reference_date"),
-            "remarks": doc.get("remarks"),
-            "total_allocated_amount": doc.get("total_allocated_amount") or 0,
-            "unallocated_amount": doc.get("unallocated_amount") or 0,
+            "name": pe["name"],
+            "docstatus": pe["docstatus"],
+            "status": "Submitted" if pe["docstatus"] == 1 else "Draft",
+            "posting_date": pe.get("posting_date"),
+            "party": pe.get("party"),
+            "party_name": pe.get("party_name"),
+            "mode_of_payment": pe.get("mode_of_payment"),
+            "paid_amount": pe.get("paid_amount") or 0,
+            "received_amount": pe.get("received_amount") or 0,
+            "reference_no": pe.get("reference_no"),
+            "reference_date": pe.get("reference_date"),
+            "remarks": pe.get("remarks"),
+            "total_allocated_amount": pe.get("total_allocated_amount") or 0,
+            "unallocated_amount": pe.get("unallocated_amount") or 0,
             "references": refs,
         }
         return response("PE details", payload, True, 200)
