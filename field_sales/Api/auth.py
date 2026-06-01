@@ -2609,15 +2609,20 @@ def payment_entry_status():
     if not sales_person:
         return {"status": "error", "message": "Missing sales_person"}
 
+    # Surface BOTH drafts (docstatus=0) and submitted (docstatus=1) PEs.
+    # Mirrors the Quotation/SO mobile lists where users want to see their
+    # own recent activity, not just drafts. Cancelled (docstatus=2) is
+    # excluded as those are dead records.
     payment_entries = frappe.get_all(
         "Payment Entry",
         filters={
             "party_type": "Customer",
             "party": customer_name,
             "custom_sales_person": sales_person,
-            "docstatus": 0
+            "docstatus": ["in", [0, 1]],
         },
-        fields=["name", "posting_date", "paid_amount", "reference_no"]
+        fields=["name", "posting_date", "paid_amount", "reference_no", "docstatus"],
+        order_by="creation desc",
     )
 
     result = []
@@ -2644,8 +2649,9 @@ def payment_entry_status():
             "posting_date": pe.posting_date,
             "paid_amount": pe.paid_amount,
             "reference_no": pe.reference_no,
-            "status": "Draft",
-            "references": ref_list
+            "docstatus": pe.docstatus,
+            "status": "Submitted" if pe.docstatus == 1 else "Draft",
+            "references": ref_list,
         })
 
     return {
@@ -4261,6 +4267,55 @@ def submit_sales_order(name=None):
         return response("Sales Order not found", None, False, 404)
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.submit_sales_order")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def submit_payment_entry(name=None):
+    """Submit a Draft Payment Entry created via the mobile.
+    Mirrors submit_quotation / submit_sales_order — the create endpoint
+    leaves the PE at docstatus=0 so the user can review (and Print /
+    Share). This whitelist takes it from Draft → Submitted.
+    """
+    try:
+        data = frappe.request.get_json() or {}
+        name = name or data.get("name")
+
+        if not name:
+            return response("Payment Entry name is required", None, False, 400)
+        if not frappe.db.exists("Payment Entry", name):
+            return response(f"Payment Entry '{name}' does not exist", None, False, 404)
+
+        doc = frappe.get_doc("Payment Entry", name)
+
+        if doc.docstatus != 0:
+            return response("Already submitted or cancelled", None, False, 400)
+
+        # Permission: caller must be the PE's owning sales person (or Admin).
+        caller_sp = _resolve_caller_sales_person()
+        if caller_sp and doc.get("custom_sales_person") and doc.custom_sales_person != caller_sp:
+            return response(
+                "You do not have permission to submit this Payment Entry",
+                None,
+                False,
+                403,
+            )
+
+        doc.submit()
+
+        return response(
+            "Payment Entry submitted",
+            {"name": doc.name, "status": "Submitted", "docstatus": doc.docstatus},
+            True,
+            200,
+        )
+    except frappe.PermissionError:
+        frappe.log_error(frappe.get_traceback(), "field_sales.submit_payment_entry")
+        return response("Permission denied", None, False, 403)
+    except frappe.DoesNotExistError:
+        return response("Payment Entry not found", None, False, 404)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.submit_payment_entry")
         return response(str(e), None, False, 500)
 
 
