@@ -4270,6 +4270,46 @@ def submit_sales_order(name=None):
         return response(str(e), None, False, 500)
 
 
+@frappe.whitelist()
+def get_my_recent_payment_entries(limit=20):
+    """List the calling sales person's recent Payment Entries (Drafts +
+    Submitted), across every customer. Powers the always-on "My Recent
+    Payment Entries" card on the mobile PE screen.
+
+    Filters:
+      - custom_sales_person = caller's resolved Sales Person
+      - docstatus IN (0, 1)   (cancelled excluded)
+    Ordered: creation desc.
+    """
+    try:
+        caller_sp = _resolve_caller_sales_person()
+        if not caller_sp:
+            return response("No Sales Person linked to your account", None, False, 404)
+        try:
+            limit_n = int(limit) if limit else 20
+        except (TypeError, ValueError):
+            limit_n = 20
+        rows = frappe.get_all(
+            "Payment Entry",
+            filters={
+                "custom_sales_person": caller_sp,
+                "docstatus": ["in", [0, 1]],
+            },
+            fields=[
+                "name", "posting_date", "paid_amount", "reference_no",
+                "docstatus", "party", "party_name", "mode_of_payment",
+            ],
+            order_by="creation desc",
+            limit=limit_n,
+        )
+        for r in rows:
+            r["status"] = "Submitted" if r.get("docstatus") == 1 else "Draft"
+        return response("My recent PEs", {"entries": rows}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_recent_payment_entries")
+        return response(str(e), None, False, 500)
+
+
 @frappe.whitelist(methods=["POST"])
 def submit_payment_entry(name=None):
     """Submit a Draft Payment Entry created via the mobile.
