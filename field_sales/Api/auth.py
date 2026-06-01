@@ -5588,24 +5588,40 @@ def get_pending_leave_approvals():
         if not user or user == "Guest":
             return response("Authentication required", None, False, 401)
 
-        # Multi-step chain: current_approver is the caller AND status
-        # hasn't been finalized.
+        # Match leave.py:_caller_can_act_on policy. A leave is "pending
+        # for me" if ANY of:
+        #   - current_approver = me (resolved user)
+        #   - leave_approver = me (standard ERPNext designated field)
+        #   - I hold the role of the current step (approval_flow row at
+        #     idx = current_approval_index + 1, since Frappe child idx
+        #     is 1-based while current_approval_index is 0-based)
+        roles = frappe.get_roles(user) or ["__noroles__"]
         rows = frappe.db.sql(
             """
-            SELECT name, employee, employee_name, leave_type,
-                   from_date, to_date, half_day, total_leave_days,
-                   description, posting_date,
-                   current_approver, leave_approver,
-                   custom_approval_status, status
-            FROM `tabLeave Application`
-            WHERE (current_approver = %(user)s OR
-                   (current_approver IS NULL AND leave_approver = %(user)s))
-              AND docstatus IN (0, 1)
-              AND COALESCE(custom_approval_status, '') NOT IN ('Approved', 'Rejected')
-              AND status IN ('Open', 'Pending')
-            ORDER BY from_date ASC
+            SELECT la.name, la.employee, la.employee_name, la.leave_type,
+                   la.from_date, la.to_date, la.half_day, la.total_leave_days,
+                   la.description, la.posting_date,
+                   la.current_approver, la.leave_approver,
+                   la.custom_approval_status, la.status
+            FROM `tabLeave Application` la
+            WHERE (
+                la.current_approver = %(user)s
+                OR la.leave_approver = %(user)s
+                OR EXISTS (
+                    SELECT 1
+                    FROM `tabLeave Approval Detail` flow
+                    WHERE flow.parent = la.name
+                      AND flow.parenttype = 'Leave Application'
+                      AND flow.idx = COALESCE(la.current_approval_index, 0) + 1
+                      AND flow.approver_role IN %(roles)s
+                )
+            )
+              AND la.docstatus IN (0, 1)
+              AND COALESCE(la.custom_approval_status, '') NOT IN ('Approved', 'Rejected')
+              AND la.status IN ('Open', 'Pending')
+            ORDER BY la.from_date ASC
             """,
-            {"user": user},
+            {"user": user, "roles": tuple(roles)},
             as_dict=True,
         )
         return response(
