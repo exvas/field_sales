@@ -4335,6 +4335,64 @@ def get_my_recent_payment_entries(
         return response(str(e), None, False, 500)
 
 
+@frappe.whitelist()
+def get_payment_entry_details(name=None):
+    """Full details for one Payment Entry — header fields + reference rows
+    (Sales Invoice / Sales Order allocations). Powers the mobile detail
+    sheet that opens when a user taps a row in "My Recent Payment
+    Entries". Callers must be the sales person who owns the doc.
+    """
+    try:
+        if not name:
+            return response("name is required", None, False, 400)
+        if not frappe.db.exists("Payment Entry", name):
+            return response("Payment Entry not found", None, False, 404)
+
+        doc = frappe.get_doc("Payment Entry", name)
+
+        # Permission gate: caller must be the sales person who owns this
+        # PE (or Administrator). custom_sales_person was set on create.
+        caller_sp = _resolve_caller_sales_person()
+        owner_sp = doc.get("custom_sales_person")
+        if frappe.session.user != "Administrator" and (
+            not caller_sp or caller_sp != owner_sp
+        ):
+            return response("Not your Payment Entry", None, False, 403)
+
+        refs = []
+        for r in (doc.get("references") or []):
+            refs.append({
+                "reference_doctype": r.get("reference_doctype"),
+                "reference_name": r.get("reference_name"),
+                "total_amount": r.get("total_amount") or 0,
+                "outstanding_amount": r.get("outstanding_amount") or 0,
+                "allocated_amount": r.get("allocated_amount") or 0,
+                "due_date": r.get("due_date"),
+            })
+
+        payload = {
+            "name": doc.name,
+            "docstatus": doc.docstatus,
+            "status": "Submitted" if doc.docstatus == 1 else "Draft",
+            "posting_date": doc.get("posting_date"),
+            "party": doc.get("party"),
+            "party_name": doc.get("party_name"),
+            "mode_of_payment": doc.get("mode_of_payment"),
+            "paid_amount": doc.get("paid_amount") or 0,
+            "received_amount": doc.get("received_amount") or 0,
+            "reference_no": doc.get("reference_no"),
+            "reference_date": doc.get("reference_date"),
+            "remarks": doc.get("remarks"),
+            "total_allocated_amount": doc.get("total_allocated_amount") or 0,
+            "unallocated_amount": doc.get("unallocated_amount") or 0,
+            "references": refs,
+        }
+        return response("PE details", payload, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_payment_entry_details")
+        return response(str(e), None, False, 500)
+
+
 @frappe.whitelist(methods=["POST"])
 def submit_payment_entry(name=None):
     """Submit a Draft Payment Entry created via the mobile.
