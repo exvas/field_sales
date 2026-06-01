@@ -4271,12 +4271,20 @@ def submit_sales_order(name=None):
 
 
 @frappe.whitelist()
-def get_my_recent_payment_entries(limit=20):
+def get_my_recent_payment_entries(
+    limit=50, status=None, customer=None, from_date=None, to_date=None
+):
     """List the calling sales person's recent Payment Entries (Drafts +
     Submitted), across every customer. Powers the always-on "My Recent
     Payment Entries" card on the mobile PE screen.
 
-    Filters:
+    Optional filters:
+      - status: 'Draft' | 'Submitted' (anything else = no status filter)
+      - customer: party id (e.g. CA-CUS-02064)
+      - from_date / to_date: ISO date strings (inclusive). Filters on
+        posting_date.
+
+    Always-on filters:
       - custom_sales_person = caller's resolved Sales Person
       - docstatus IN (0, 1)   (cancelled excluded)
     Ordered: creation desc.
@@ -4286,15 +4294,32 @@ def get_my_recent_payment_entries(limit=20):
         if not caller_sp:
             return response("No Sales Person linked to your account", None, False, 404)
         try:
-            limit_n = int(limit) if limit else 20
+            limit_n = int(limit) if limit else 50
         except (TypeError, ValueError):
-            limit_n = 20
+            limit_n = 50
+
+        filters = {
+            "custom_sales_person": caller_sp,
+            "docstatus": ["in", [0, 1]],
+        }
+        if status == "Draft":
+            filters["docstatus"] = 0
+        elif status == "Submitted":
+            filters["docstatus"] = 1
+        if customer:
+            filters["party"] = customer
+        if from_date:
+            filters["posting_date"] = [">=", from_date]
+        if to_date:
+            # If from_date also present, combine into a between range
+            if isinstance(filters.get("posting_date"), list):
+                filters["posting_date"] = ["between", [from_date, to_date]]
+            else:
+                filters["posting_date"] = ["<=", to_date]
+
         rows = frappe.get_all(
             "Payment Entry",
-            filters={
-                "custom_sales_person": caller_sp,
-                "docstatus": ["in", [0, 1]],
-            },
+            filters=filters,
             fields=[
                 "name", "posting_date", "paid_amount", "reference_no",
                 "docstatus", "party", "party_name", "mode_of_payment",
