@@ -4692,23 +4692,29 @@ def get_today_snapshot(sales_person_id=None):
         today_str = today()
 
         # Visits — Customer Visit Log rows for this sales person, dated today.
-        # Schema varies; query defensively via the table API.
+        # Doctype fields: `employee` (Link -> Sales Person, labeled
+        # "Sales Person Id") and `date`. The CREATE endpoint
+        # log_customer_visit writes those exact field names. Earlier
+        # versions of this counter queried `sales_person`/`visit_date`
+        # which don't exist on the doctype — both attempts errored out
+        # and the except swallowed the bug, giving every sales person
+        # a permanent "0 Visits" tile no matter how many they logged.
         visits = 0
         try:
             visits = frappe.db.count(
                 "Customer Visit Log",
                 filters={
-                    "sales_person": sp,
-                    "visit_date": today_str,
+                    "employee": sp,
+                    "date": today_str,
                 },
             )
         except Exception:
             try:
-                # Fallback: parent log row created today
+                # Fallback: rows created today by this sales person
                 visits = frappe.db.count(
                     "Customer Visit Log",
                     filters={
-                        "sales_person": sp,
+                        "employee": sp,
                         "creation": [">=", today_str],
                     },
                 )
