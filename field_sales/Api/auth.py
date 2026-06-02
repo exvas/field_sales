@@ -4770,6 +4770,124 @@ def get_today_snapshot(sales_person_id=None):
         return response(str(e), None, False, 500)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Today-detail endpoints — back the three home tiles (Visits / Orders /
+# Collected). Each returns the list that the count on the tile rolled
+# up, in a shape the mobile detail page can render generically.
+# Caller's sales person is resolved via _resolve_caller_sales_person
+# (same as get_today_snapshot); sales_person_id arg is honoured if
+# explicitly passed but cross-user reads are rejected.
+# ─────────────────────────────────────────────────────────────────────
+
+def _resolve_sp_for_detail(sales_person_id=None):
+    """Common gate for the three today-detail endpoints. Returns the
+    sales person name or raises via response().
+    """
+    caller_sp = _resolve_caller_sales_person()
+    sp = sales_person_id or caller_sp
+    if not sp:
+        return None, response("Sales person required", None, False, 400)
+    if caller_sp and sp != caller_sp:
+        return None, response("You can only view your own list", None, False, 403)
+    return sp, None
+
+
+@frappe.whitelist()
+def get_my_today_visits(sales_person_id=None):
+    """Today's Customer Visit Log rows for the caller."""
+    try:
+        from frappe.utils import today
+        sp, err = _resolve_sp_for_detail(sales_person_id)
+        if err is not None:
+            return err
+        rows = frappe.get_all(
+            "Customer Visit Log",
+            filters={"employee": sp, "date": today()},
+            fields=["name", "customer_name", "time", "latitude", "longitude", "description"],
+            order_by="time desc",
+            limit=100,
+        )
+        for r in rows:
+            if r.get("time"):
+                r["time"] = str(r["time"])
+        return response("Today's visits", {"entries": rows, "count": len(rows)}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_today_visits")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_today_orders(sales_person_id=None):
+    """Today's Sales Orders created by the caller."""
+    try:
+        from frappe.utils import today
+        sp, err = _resolve_sp_for_detail(sales_person_id)
+        if err is not None:
+            return err
+        rows = frappe.get_all(
+            "Sales Order",
+            filters={
+                "custom_sales_person": sp,
+                "transaction_date": today(),
+                "docstatus": ["in", [0, 1]],
+            },
+            fields=[
+                "name", "customer", "customer_name", "transaction_date",
+                "grand_total", "rounded_total", "status", "docstatus",
+                "delivery_date",
+            ],
+            order_by="creation desc",
+            limit=100,
+        )
+        for r in rows:
+            r["status_label"] = "Submitted" if r.get("docstatus") == 1 else "Draft"
+        return response("Today's orders", {"entries": rows, "count": len(rows)}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_today_orders")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_today_collected(sales_person_id=None):
+    """Today's Submitted Payment Entries linked to the caller. Sums to
+    the same number as the 'Collected' tile.
+    """
+    try:
+        from frappe.utils import today
+        sp, err = _resolve_sp_for_detail(sales_person_id)
+        if err is not None:
+            return err
+        today_str = today()
+        rows = frappe.db.sql(
+            """
+            SELECT name, party, party_name, posting_date, paid_amount,
+                   reference_no, mode_of_payment, docstatus
+            FROM `tabPayment Entry`
+            WHERE docstatus = 1
+              AND DATE(posting_date) = %(d)s
+              AND (custom_sales_person = %(sp)s OR owner IN (
+                   SELECT user_id FROM `tabEmployee`
+                   WHERE name IN (
+                     SELECT employee FROM `tabSales Person` WHERE name = %(sp)s
+                   )
+              ))
+            ORDER BY creation DESC
+            LIMIT 100
+            """,
+            {"d": today_str, "sp": sp},
+            as_dict=True,
+        )
+        total = sum(float(r.get("paid_amount") or 0) for r in rows)
+        return response(
+            "Today's collections",
+            {"entries": rows, "count": len(rows), "total": total},
+            True, 200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_my_today_collected")
+        return response(str(e), None, False, 500)
+
+
 @frappe.whitelist(methods=["POST"])
 def create_employee_checkin(log_type=None, latitude=None, longitude=None):
     """Mobile-app Check-In / Check-Out.
