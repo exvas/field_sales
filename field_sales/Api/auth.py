@@ -2869,8 +2869,12 @@ def mark_notification_read(name=None):
         owner = frappe.db.get_value("Notification Log", name, "for_user")
         if owner != user:
             return response("Not your notification", None, False, 403)
+        # Only set columns that actually exist on Notification Log in
+        # this Frappe version. `seen` was tried 2026-06-04 and threw
+        # "Unknown column 'seen' in 'SET'" — drop it. The `read` flag
+        # alone is what the desk + mobile both look at.
         frappe.db.set_value("Notification Log", name,
-                            {"read": 1, "seen": 1},
+                            "read", 1,
                             update_modified=False)
         frappe.db.commit()
         return response("Marked read", {"name": name}, True, 200)
@@ -2893,7 +2897,7 @@ def mark_all_notifications_read():
         n = frappe.db.sql(
             """
             UPDATE `tabNotification Log`
-               SET `read` = 1, seen = 1
+               SET `read` = 1
              WHERE for_user = %s AND `read` = 0
             """,
             (user,),
