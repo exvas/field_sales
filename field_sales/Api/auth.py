@@ -5217,6 +5217,48 @@ def create_employee_checkin(log_type=None, latitude=None, longitude=None):
 
         checkin.insert(ignore_permissions=True)
 
+        # Customer-asked behavior 2026-06-04: every mobile Check-In/Out
+        # should ALSO drop a Customer Visit Log row at the same lat/long,
+        # so HR can audit where employees punch in from on the existing
+        # visit-log map view. The Customer Visit Log.employee field is
+        # Link -> Sales Person, so non-sales-person users (HR, Admin)
+        # silently skip this step — they still get the Employee Checkin.
+        visit_log_name = None
+        if latitude is not None and longitude is not None:
+            sp = _resolve_caller_sales_person()
+            if sp:
+                try:
+                    visit = frappe.new_doc("Customer Visit Log")
+                    visit.employee = sp
+                    visit.date = checkin.time.date()
+                    visit.time = checkin.time.time()
+                    try:
+                        visit.latitude = float(latitude)
+                        visit.longitude = float(longitude)
+                    except (TypeError, ValueError):
+                        pass
+                    # customer_name is mandatory-ish per the existing
+                    # log_customer_visit validation — fill with the
+                    # log_type so the row reads as "Check-In" /
+                    # "Check-Out" in the visit-log grid.
+                    visit.customer_name = (
+                        "Check-In" if log_type == "IN" else "Check-Out"
+                    )
+                    visit.description = (
+                        f"Auto-created from mobile {visit.customer_name} "
+                        f"(Employee Checkin: {checkin.name})"
+                    )
+                    visit.insert(ignore_permissions=True)
+                    visit_log_name = visit.name
+                except Exception:
+                    # Don't fail the checkin if the visit log fails —
+                    # checkin is the primary record, visit log is the
+                    # audit shadow. Log + continue.
+                    frappe.log_error(
+                        frappe.get_traceback(),
+                        "field_sales.create_employee_checkin.visit_log",
+                    )
+
         return response(
             "Checkin recorded",
             {
@@ -5224,6 +5266,7 @@ def create_employee_checkin(log_type=None, latitude=None, longitude=None):
                 "log_type": checkin.log_type,
                 "time": str(checkin.time),
                 "employee": checkin.employee,
+                "customer_visit_log": visit_log_name,
             },
             True,
             200,
