@@ -2812,6 +2812,124 @@ def get_newsletters(limit=20, offset=0):
 
 
 @frappe.whitelist()
+def get_my_notifications(limit=50, unread_only=0):
+    """List the caller's Notification Log entries (the persistent log
+    behind the mobile bell icon). Push notifications create one row per
+    recipient via chundakadan.utils.push._log_notification, so every
+    historical push shows up here even if the device missed it.
+    """
+    try:
+        user = frappe.session.user
+        if not user or user == "Guest":
+            return response("Authentication required", None, False, 401)
+        try:
+            limit_n = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            limit_n = 50
+        filters = {"for_user": user}
+        if str(unread_only) in ("1", "true", "True"):
+            filters["read"] = 0
+
+        rows = frappe.get_all(
+            "Notification Log",
+            filters=filters,
+            fields=[
+                "name", "subject", "email_content", "type",
+                "document_type", "document_name", "read",
+                "from_user", "creation",
+            ],
+            order_by="creation desc",
+            limit=limit_n,
+            ignore_permissions=True,
+        )
+        for r in rows:
+            r["creation"] = str(r.get("creation") or "")
+        return response(
+            "My notifications",
+            {"entries": rows, "count": len(rows)},
+            True, 200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(),
+                         "field_sales.get_my_notifications")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def mark_notification_read(name=None):
+    """Mark a single Notification Log row as read. Called when the user
+    taps a row in the mobile bell list.
+    """
+    try:
+        user = frappe.session.user
+        if not user or user == "Guest":
+            return response("Authentication required", None, False, 401)
+        if not name:
+            return response("name is required", None, False, 400)
+        owner = frappe.db.get_value("Notification Log", name, "for_user")
+        if owner != user:
+            return response("Not your notification", None, False, 403)
+        frappe.db.set_value("Notification Log", name,
+                            {"read": 1, "seen": 1},
+                            update_modified=False)
+        frappe.db.commit()
+        return response("Marked read", {"name": name}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(),
+                         "field_sales.mark_notification_read")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def mark_all_notifications_read():
+    """Clears the unread badge by setting read=1 on every unread
+    notification for the caller. Called from the mobile bell's
+    'Mark all as read' action.
+    """
+    try:
+        user = frappe.session.user
+        if not user or user == "Guest":
+            return response("Authentication required", None, False, 401)
+        n = frappe.db.sql(
+            """
+            UPDATE `tabNotification Log`
+               SET `read` = 1, seen = 1
+             WHERE for_user = %s AND `read` = 0
+            """,
+            (user,),
+        )
+        frappe.db.commit()
+        affected = frappe.db.sql("SELECT ROW_COUNT()")[0][0]
+        return response(
+            "All marked read",
+            {"affected": affected},
+            True, 200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(),
+                         "field_sales.mark_all_notifications_read")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_unread_notification_count():
+    """Returns the unread Notification Log count for the caller. Polled
+    by the mobile home page to render the badge on the bell icon.
+    """
+    try:
+        user = frappe.session.user
+        if not user or user == "Guest":
+            return response("Authentication required", None, False, 401)
+        n = frappe.db.count("Notification Log",
+                            filters={"for_user": user, "read": 0})
+        return response("Unread count", {"count": n}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(),
+                         "field_sales.get_unread_notification_count")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
 def get_newsletter_details(name=None):
     """Return the full body of one Newsletter for the detail page."""
     try:
