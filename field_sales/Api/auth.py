@@ -2661,18 +2661,174 @@ def payment_entry_status():
     }
 
 @frappe.whitelist(allow_guest=False)
-def save_fcm_token(fcm_token):
-    employee = frappe.session.user
-    if not employee:
-        frappe.throw("Not logged in")
+def save_fcm_token(fcm_token, device_platform=None, device_id=None):
+    """Register / refresh an FCM token for the calling user. Idempotent —
+    if the exact same token already exists for this user we just update
+    last_seen; same device_id replaces the prior token; otherwise insert
+    a new row.
 
+    Called by the Flutter app after Firebase getToken() resolves.
+    """
+    user = frappe.session.user
+    if not user or user == "Guest":
+        frappe.throw("Not logged in")
+    if not fcm_token:
+        frappe.throw("fcm_token is required")
+
+    now = frappe.utils.now()
+
+    # 1. Exact same token already stored? Just touch last_seen.
+    existing = frappe.db.get_value(
+        "FCM Token",
+        {"user": user, "token": fcm_token},
+        "name",
+    )
+    if existing:
+        frappe.db.set_value("FCM Token", existing, "last_seen", now,
+                            update_modified=False)
+        frappe.db.commit()
+        return {"status": "success", "message": "Token refreshed", "name": existing}
+
+    # 2. Same device, different token? Replace.
+    if device_id:
+        prior = frappe.db.get_value(
+            "FCM Token",
+            {"user": user, "device_id": device_id},
+            "name",
+        )
+        if prior:
+            frappe.db.set_value("FCM Token", prior, {
+                "token": fcm_token,
+                "device_platform": device_platform or "Android",
+                "last_seen": now,
+            }, update_modified=False)
+            frappe.db.commit()
+            return {"status": "success", "message": "Token replaced", "name": prior}
+
+    # 3. Brand new — insert.
     doc = frappe.get_doc({
         "doctype": "FCM Token",
-        "user": employee,
-        "token": fcm_token
+        "user": user,
+        "token": fcm_token,
+        "device_platform": device_platform or "Android",
+        "device_id": device_id,
+        "last_seen": now,
     })
     doc.insert(ignore_permissions=True)
-    return {"status": "success", "message": "Token saved"}
+    frappe.db.commit()
+    return {"status": "success", "message": "Token saved", "name": doc.name}
+
+
+@frappe.whitelist(allow_guest=False)
+def delete_fcm_token(fcm_token=None, device_id=None):
+    """Called on logout. Removes this device's tokens so the user stops
+    receiving pushes on a phone they no longer have access to.
+    """
+    user = frappe.session.user
+    if not user or user == "Guest":
+        return response("Not logged in", None, False, 401)
+    filters = {"user": user}
+    if fcm_token:
+        filters["token"] = fcm_token
+    elif device_id:
+        filters["device_id"] = device_id
+    else:
+        return response("fcm_token or device_id required", None, False, 400)
+    deleted = frappe.db.delete("FCM Token", filters)
+    frappe.db.commit()
+    return response("Token removed", {"removed": True}, True, 200)
+
+
+@frappe.whitelist()
+def get_hr_policy():
+    """Return the current HR Policy snapshot. Mobile compares `version`
+    against its cached copy and re-fetches the PDF only if newer.
+    """
+    try:
+        doc = frappe.get_single("HR Policy")
+        pdf_url = doc.get("policy_pdf") or ""
+        # Frappe stores Attach as a relative path like /private/files/... or
+        # /files/.... Prepend site URL for the mobile to fetch.
+        full_pdf_url = ""
+        if pdf_url:
+            base = frappe.utils.get_url()
+            full_pdf_url = pdf_url if pdf_url.startswith("http") else f"{base}{pdf_url}"
+        return response(
+            "HR Policy",
+            {
+                "version": doc.version or 0,
+                "policy_pdf_url": full_pdf_url,
+                "policy_html": doc.policy_html or "",
+                "last_updated_by": doc.last_updated_by or "",
+                "last_updated_on": str(doc.last_updated_on or ""),
+            },
+            True,
+            200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_hr_policy")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_newsletters(limit=20, offset=0):
+    """List recent newsletters for the mobile inbox. Returns each with a
+    short HTML-stripped preview; the detail endpoint returns the full
+    body when the user taps in.
+    """
+    try:
+        try:
+            limit_n = max(1, min(int(limit), 100))
+        except (TypeError, ValueError):
+            limit_n = 20
+        try:
+            offset_n = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset_n = 0
+
+        rows = frappe.get_all(
+            "Newsletter",
+            fields=[
+                "name", "subject", "sender_name", "sender_email",
+                "send_from", "creation",
+            ],
+            order_by="creation desc",
+            limit=limit_n,
+            start=offset_n,
+            ignore_permissions=True,
+        )
+        # Add a 200-char preview from `message`
+        import re
+        for r in rows:
+            msg = frappe.db.get_value("Newsletter", r["name"], "message") or ""
+            text = re.sub(r"<[^>]+>", " ", msg).strip()
+            text = re.sub(r"\s+", " ", text)
+            r["preview"] = (text[:200] + "…") if len(text) > 200 else text
+            r["creation"] = str(r.get("creation") or "")
+        return response("Newsletters", {"entries": rows, "count": len(rows)}, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_newsletters")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_newsletter_details(name=None):
+    """Return the full body of one Newsletter for the detail page."""
+    try:
+        if not name:
+            return response("name is required", None, False, 400)
+        row = frappe.db.get_value(
+            "Newsletter", name,
+            ["name", "subject", "sender_name", "sender_email", "message", "creation"],
+            as_dict=True,
+        )
+        if not row:
+            return response("Newsletter not found", None, False, 404)
+        row["creation"] = str(row.get("creation") or "")
+        return response("Newsletter", row, True, 200)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "field_sales.get_newsletter_details")
+        return response(str(e), None, False, 500)
 
 @frappe.whitelist(methods=["POST"])
 def location_entry():
