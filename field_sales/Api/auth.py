@@ -3161,63 +3161,17 @@ def log_customer_visit():
         doc.visit_type = "Customer Visit"
     doc.insert()
 
-    # Mirror to Employee Checkin at the same lat/long so HR's location
-    # audit trail captures every mobile-logged visit, not just the
-    # morning/evening Check-In / Check-Out events. Asked 2026-06-05 by
-    # Najeeb after seeing Anshaf's CV-1273 land without a matching
-    # Employee Checkin record.
-    #
-    # skip_auto_attendance = 1 because ERPNext's auto-attendance cron
-    # treats IN/OUT pairs as daily attendance — without this flag, a
-    # sales executive visiting 5 customers per day would generate 5
-    # phantom "IN" attendance records and corrupt the daily roll-up.
-    # Only the real Check-In / Check-Out events (from
-    # create_employee_checkin) feed attendance.
-    employee_checkin_name = None
-    try:
-        # Customer Visit Log.employee is Link → Sales Person.
-        # Employee Checkin.employee is Link → Employee. Resolve the SP
-        # back to its Employee record.
-        sp_employee = frappe.db.get_value(
-            "Sales Person", data["sales_person"], "employee"
-        )
-        if sp_employee:
-            from frappe.utils import get_datetime
-
-            checkin = frappe.new_doc("Employee Checkin")
-            checkin.employee = sp_employee
-            checkin.log_type = "IN"
-            checkin.time = get_datetime(f"{data['date']} {data['time']}")
-            checkin.device_id = "mobile_visit_log"
-            checkin.skip_auto_attendance = 1
-
-            meta = frappe.get_meta("Employee Checkin")
-            if meta.has_field("custom_latitude"):
-                try:
-                    checkin.custom_latitude = float(data["latitude"])
-                except (TypeError, ValueError):
-                    pass
-            if meta.has_field("custom_longitude"):
-                try:
-                    checkin.custom_longitude = float(data["longitude"])
-                except (TypeError, ValueError):
-                    pass
-
-            checkin.insert(ignore_permissions=True)
-            employee_checkin_name = checkin.name
-    except Exception:
-        # Don't fail the visit log if the checkin mirror fails — visit
-        # log is the primary record, checkin is the audit shadow.
-        frappe.log_error(
-            "field_sales.log_customer_visit.checkin_mirror",
-            frappe.get_traceback(),
-        )
+    # NO Employee Checkin mirror here (intentionally). Customer visits
+    # logged mid-day are sales tracking, NOT attendance — they should
+    # ONLY land in Customer Visit Log. The mirror was added 2026-06-05
+    # and reverted same day after Najeeb clarified the intent:
+    #   create_employee_checkin (Check-In/Check-Out) → both records
+    #   log_customer_visit       (mid-day visits)     → visit log only
 
     return {
         "success": True,
         "message": "Customer Visit Log created successfully",
         "name": doc.name,
-        "employee_checkin": employee_checkin_name,
     }
 
 @frappe.whitelist(allow_guest=False)
