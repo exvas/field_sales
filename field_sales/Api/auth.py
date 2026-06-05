@@ -3154,6 +3154,11 @@ def log_customer_visit():
     doc.latitude = data["latitude"]
     doc.customer_name = data["customer_name"]
     doc.description = data.get("description", "")
+    # Explicit visit_type = Customer Visit. Field auto-created by
+    # chundakadan.install.ensure_visit_log_visit_type_field. has_field
+    # guards against missing-field benches that haven't migrated.
+    if frappe.get_meta("Customer Visit Log").has_field("visit_type"):
+        doc.visit_type = "Customer Visit"
     doc.insert()
 
     # Mirror to Employee Checkin at the same lat/long so HR's location
@@ -5301,6 +5306,16 @@ def create_employee_checkin(log_type=None, latitude=None, longitude=None):
                     visit.customer_name = (
                         "Check-In" if log_type == "IN" else "Check-Out"
                     )
+                    # visit_type is the structured filterable companion
+                    # to customer_name. Custom Field auto-created by
+                    # chundakadan.install.ensure_visit_log_visit_type_field.
+                    # has_field guards against the field not existing yet
+                    # on benches that haven't migrated.
+                    visit_type_value = (
+                        "Check-In" if log_type == "IN" else "Check-Out"
+                    )
+                    if frappe.get_meta("Customer Visit Log").has_field("visit_type"):
+                        visit.visit_type = visit_type_value
                     visit.description = (
                         f"Auto-created from mobile {visit.customer_name} "
                         f"(Employee Checkin: {checkin.name})"
