@@ -3159,7 +3159,13 @@ def log_customer_visit():
     # guards against missing-field benches that haven't migrated.
     if frappe.get_meta("Customer Visit Log").has_field("visit_type"):
         doc.visit_type = "Customer Visit"
-    doc.insert()
+    # ignore_permissions=True: this endpoint is @frappe.whitelist'd +
+    # validates required fields above, so we trust authenticated users
+    # to log their own visits. Without this, every sales executive
+    # hits 403 'No permission for Customer Visit Log' because the
+    # doctype's role-perm rules don't include 'Sales User' (matches
+    # the pattern used in create_employee_checkin's visit-log mirror).
+    doc.insert(ignore_permissions=True)
 
     # NO Employee Checkin mirror here (intentionally). Customer visits
     # logged mid-day are sales tracking, NOT attendance — they should
