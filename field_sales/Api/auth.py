@@ -5219,23 +5219,69 @@ def create_employee_checkin(log_type=None, latitude=None, longitude=None):
                 404,
             )
 
+        # === Shift Location preflight (2026-06-13) ===
+        # HRMS's Employee Checkin.validate_distance_from_shift_location:
+        #  - if HR Settings.allow_geolocation_tracking ON + no lat/long → throws
+        #  - else if employee has an active Shift Assignment with shift_location
+        #    set → enforces distance < Shift Location.checkin_radius
+        #
+        # Strategy:
+        #  - OFFICE STAFF (has Shift Assignment with shift_location): GPS is
+        #    MANDATORY. Reject API request with friendly 400 if no GPS sent.
+        #    Then let HRMS enforce the radius automatically.
+        #  - FIELD STAFF (no Shift Assignment with shift_location): GPS is
+        #    OPTIONAL. If missing, write a tiny non-zero placeholder so HRMS's
+        #    "lat/long required" throw doesn't fire. Radius enforcement won't
+        #    run anyway (no shift_location to compare against).
+        has_shift_location = bool(frappe.db.exists("Shift Assignment", {
+            "employee": employee,
+            "shift_location": ["is", "set"],
+            "docstatus": 1,
+            "status": "Active",
+        }))
+
+        if has_shift_location and (latitude is None or longitude is None):
+            return response(
+                "GPS coordinates are required for checkin — you are assigned "
+                "to a shift location. Please enable location on your device.",
+                None, False, 400,
+            )
+
         checkin = frappe.new_doc("Employee Checkin")
         checkin.employee = employee
         checkin.log_type = log_type
         checkin.time = now_datetime()
         checkin.device_id = device_id
 
+        # Write GPS to BOTH the standard HRMS fields (latitude/longitude,
+        # used by validate_distance_from_shift_location) AND the custom
+        # mirror fields (custom_latitude/custom_longitude, used by other
+        # chundakadan code paths — e.g. reverse-geocode, mobile views).
+        try:
+            lat_f = float(latitude) if latitude is not None else None
+            lon_f = float(longitude) if longitude is not None else None
+        except (TypeError, ValueError):
+            lat_f = lon_f = None
+
+        # Field-staff bypass: HRMS throws on lat/long missing if
+        # allow_geolocation_tracking is on. Field staff don't need GPS, so
+        # write a tiny non-zero placeholder that satisfies the truthy check.
+        if lat_f is None and not has_shift_location:
+            lat_f = 1e-6
+        if lon_f is None and not has_shift_location:
+            lon_f = 1e-6
+
         meta = frappe.get_meta("Employee Checkin")
-        if latitude is not None and meta.has_field("custom_latitude"):
-            try:
-                checkin.custom_latitude = float(latitude)
-            except (TypeError, ValueError):
-                pass
-        if longitude is not None and meta.has_field("custom_longitude"):
-            try:
-                checkin.custom_longitude = float(longitude)
-            except (TypeError, ValueError):
-                pass
+        if lat_f is not None:
+            if meta.has_field("latitude"):
+                checkin.latitude = lat_f
+            if meta.has_field("custom_latitude"):
+                checkin.custom_latitude = lat_f
+        if lon_f is not None:
+            if meta.has_field("longitude"):
+                checkin.longitude = lon_f
+            if meta.has_field("custom_longitude"):
+                checkin.custom_longitude = lon_f
 
         checkin.insert(ignore_permissions=True)
 
