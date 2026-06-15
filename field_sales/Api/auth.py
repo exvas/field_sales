@@ -1961,12 +1961,16 @@ def create_sales_order():
 
         insufficient_items = []
 
+        # Rename-safety: prefer server-resolved Sales Person over the
+        # potentially-stale client-sent value (see 2026-06-15 Anshaf
+        # incident where the bulk rename invalidated cached names).
+        so_caller_sp = _resolve_caller_sales_person() or data.get("sales_person")
         so = frappe.get_doc({
             "doctype": "Sales Order",
             "customer": customer,
             "company": company_name,
             "currency": data.get("currency") or default_currency,
-            "custom_sales_person": data.get("sales_person"),
+            "custom_sales_person": so_caller_sp,
             "delivery_date": data.get("delivery_date") or nowdate(),
             "transaction_date": data.get("transaction_date") or nowdate(),
             "custom_special_order": 0 if enable_stock_validation else 1,
@@ -2508,7 +2512,9 @@ def create_payment_entry_from_sales_invoices():
     pe.party = customer
     pe.posting_date = now()
     pe.company = company
-    pe.custom_sales_person = data.get("sales_person")
+    # Use the already-resolved caller_sp (server-side, rename-safe)
+    # — NOT the raw client-sent value which may be stale post-rename.
+    pe.custom_sales_person = caller_sp
     pe.mode_of_payment = mode_of_payment
     pe.paid_amount = total_allocated_amount
     pe.received_amount = total_allocated_amount
@@ -3146,8 +3152,36 @@ def log_customer_visit():
         if not data.get(field):
             frappe.throw(_("Missing required field: {0}").format(field))
 
+    # SECURITY + RENAME-SAFETY: resolve the sales_person from the
+    # authenticated caller's Employee link, NOT from the client-sent
+    # value. Two reasons:
+    #   1. Renames — when a Sales Person doctype is renamed (2026-06-15
+    #      bulk rename to match Employee names), old Flutter app
+    #      installs still cache the OLD name in their local store and
+    #      keep sending it back. The cached value points to a Sales
+    #      Person that no longer exists → LinkValidationError on insert.
+    #   2. Authority — a malicious client could otherwise log visits
+    #      against a different sales person's name.
+    # If the caller has no linked Sales Person (e.g. HR / Admin testing),
+    # fall back to the client-sent value to preserve original behavior.
+    server_sp = _resolve_caller_sales_person()
+    if server_sp:
+        # Override silently — Flutter app's stale value gets ignored.
+        sp_to_use = server_sp
+    else:
+        # Validate the client value still exists (rename-safety)
+        client_sp = data["sales_person"]
+        if frappe.db.exists("Sales Person", client_sp):
+            sp_to_use = client_sp
+        else:
+            frappe.throw(_(
+                "Sales Person '{0}' no longer exists (may have been "
+                "renamed). Please log out + log back in on the mobile "
+                "app so it refreshes the cached name."
+            ).format(client_sp))
+
     doc = frappe.new_doc("Customer Visit Log")
-    doc.employee = data["sales_person"]
+    doc.employee = sp_to_use
     doc.date = data["date"]
     doc.time = data["time"]
     doc.longitude = data["longitude"]
@@ -3323,7 +3357,10 @@ def create_sales_return():
     sales_return.posting_date = data.get("return_date") or frappe.utils.nowdate()
     sales_return.customer = data.get("customer")
     sales_return.company = company
-    sales_return.custom_sales_person = data.get("sales_person")
+    # Rename-safety — prefer server-resolved (see Anshaf incident 2026-06-15)
+    sales_return.custom_sales_person = (
+        _resolve_caller_sales_person() or data.get("sales_person")
+    )
     sales_return.custom_return_reason = data.get("return_reason")
 
     if data.get("return_against"):
