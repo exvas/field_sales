@@ -6045,6 +6045,66 @@ def get_my_leave_applications(status_filter=None):
         return response(str(e), None, False, 500)
 
 
+def _friendly_leave_error(e):
+    """Translate noisy HRMS / Frappe validation errors into a short
+    sentence the mobile user can act on. Returns (message, http_status).
+    Falls back to the raw str(e) and 500 when the pattern is unknown.
+    """
+    import re as _re
+    msg = str(e)
+
+    # 1. Overlapping leave (HRMS OverlapError) — when an employee or approver
+    #    tries to file/approve a leave that conflicts with one that already
+    #    exists for overlapping dates.
+    m = _re.search(
+        r"already applied for ([\w\s]+?) between ([\d\-]+) and ([\d\-]+)",
+        msg,
+    )
+    if m:
+        return (
+            f"This employee already has {m.group(1).strip()} for "
+            f"{m.group(2)} to {m.group(3)}. Cancel the existing leave first "
+            f"or pick different dates.",
+            409,
+        )
+
+    # 2. No / wrong leave allocation for the requested period.
+    if "outside leave allocation period" in msg or "not allocated" in msg.lower():
+        return (
+            "Your leave balance for this period has not been set up yet. "
+            "Please ask HR to allocate leaves before applying.",
+            422,
+        )
+
+    # 3. Insufficient leave balance.
+    if "insufficient leave balance" in msg.lower() or "balance is less" in msg.lower():
+        return (
+            "Not enough leave balance for the requested days. "
+            "Check your remaining balance or pick fewer days.",
+            422,
+        )
+
+    # 4. Already-processed (chundakadan custom).
+    if "already been processed" in msg.lower():
+        return (
+            "This leave has already been approved or rejected. "
+            "Please refresh to see the latest status.",
+            409,
+        )
+
+    # 5. Authorization (chundakadan custom).
+    if "not authorized to approve" in msg.lower():
+        return (
+            "You are not the current approver for this leave. "
+            "It may have moved to the next approver already.",
+            403,
+        )
+
+    # Unknown — keep the raw message but mark 500 so we still get the
+    # error in the log for inspection.
+    return (msg or "Something went wrong. Please try again or contact HR.", 500)
+
+
 @frappe.whitelist(methods=["POST"])
 def create_leave_application(
     leave_type=None,
@@ -6123,7 +6183,8 @@ def create_leave_application(
         )
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.create_leave_application")
-        return response(str(e), None, False, 500)
+        friendly, status = _friendly_leave_error(e)
+        return response(friendly, None, False, status)
 
 
 @frappe.whitelist()
@@ -6262,7 +6323,8 @@ def act_on_leave_application(name=None, action=None, reason=None):
         return response("Leave Application not found", None, False, 404)
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.act_on_leave_application")
-        return response(str(e), None, False, 500)
+        friendly, status = _friendly_leave_error(e)
+        return response(friendly, None, False, status)
 
 
 @frappe.whitelist()
