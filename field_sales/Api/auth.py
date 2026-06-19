@@ -6077,7 +6077,11 @@ def _friendly_leave_error(e):
         )
 
     # 3. Insufficient leave balance.
-    if "insufficient leave balance" in msg.lower() or "balance is less" in msg.lower():
+    _lo = msg.lower()
+    if ("insufficient leave balance" in _lo
+            or "not enough leave balance" in _lo
+            or "balance is less" in _lo
+            or "negative leave balance" in _lo):
         return (
             "Not enough leave balance for the requested days. "
             "Check your remaining balance or pick fewer days.",
