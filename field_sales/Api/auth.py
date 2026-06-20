@@ -3147,11 +3147,6 @@ def save_salesperson_location_log():
 def log_customer_visit():
     data = json.loads(frappe.request.data)
 
-    required_fields = ["sales_person", "date", "time", "longitude", "latitude", "customer_name"]
-    for field in required_fields:
-        if not data.get(field):
-            frappe.throw(_("Missing required field: {0}").format(field))
-
     # SECURITY + RENAME-SAFETY: resolve the sales_person from the
     # authenticated caller's Employee link, NOT from the client-sent
     # value. Two reasons:
@@ -3162,23 +3157,39 @@ def log_customer_visit():
     #      Person that no longer exists → LinkValidationError on insert.
     #   2. Authority — a malicious client could otherwise log visits
     #      against a different sales person's name.
-    # If the caller has no linked Sales Person (e.g. HR / Admin testing),
-    # fall back to the client-sent value to preserve original behavior.
+    # 3. Self-healing — if the mobile app sends a blank/stale value
+    #    (happens with newly-created users whose login response didn't
+    #    yet include sales_person), the server still recovers as long
+    #    as the user→employee→sales_person chain resolves. This fixes
+    #    "Missing required field: sales_person" for fresh users.
+    # Resolve FIRST, so the required-field check below can pass on a
+    # server-supplied value even when the client sent nothing.
     server_sp = _resolve_caller_sales_person()
+    client_sp = (data.get("sales_person") or "").strip()
     if server_sp:
-        # Override silently — Flutter app's stale value gets ignored.
-        sp_to_use = server_sp
+        sp_to_use = server_sp   # always wins (rename-safe + auth-safe)
+    elif client_sp and frappe.db.exists("Sales Person", client_sp):
+        sp_to_use = client_sp
+    elif client_sp:
+        frappe.throw(_(
+            "Sales Person '{0}' no longer exists (may have been "
+            "renamed). Please log out + log back in on the mobile "
+            "app so it refreshes the cached name."
+        ).format(client_sp))
     else:
-        # Validate the client value still exists (rename-safety)
-        client_sp = data["sales_person"]
-        if frappe.db.exists("Sales Person", client_sp):
-            sp_to_use = client_sp
-        else:
-            frappe.throw(_(
-                "Sales Person '{0}' no longer exists (may have been "
-                "renamed). Please log out + log back in on the mobile "
-                "app so it refreshes the cached name."
-            ).format(client_sp))
+        frappe.throw(_(
+            "Your user account isn't linked to a Sales Person record yet. "
+            "Please ask HR to run: Employee → HR Actions → Setup Sales "
+            "Person for your record."
+        ))
+    # Write the resolved value back so the rest of the function + the
+    # required-fields check downstream sees it
+    data["sales_person"] = sp_to_use
+
+    required_fields = ["sales_person", "date", "time", "longitude", "latitude", "customer_name"]
+    for field in required_fields:
+        if not data.get(field):
+            frappe.throw(_("Missing required field: {0}").format(field))
 
     doc = frappe.new_doc("Customer Visit Log")
     doc.employee = sp_to_use
