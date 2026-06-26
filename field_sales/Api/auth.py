@@ -1661,7 +1661,7 @@ def user_login(usr, pwd, device_id=None):
         emp = frappe.db.get_value(
             "Employee",
             {"user_id": user.name},
-            ["name", "employee_name"],
+            ["name", "employee_name", "designation"],
             as_dict=True,
         )
         if not emp:
@@ -1674,6 +1674,7 @@ def user_login(usr, pwd, device_id=None):
 
         employee_id = emp.name
         employee_name = emp.employee_name
+        designation = emp.designation or ""
         sales_person_id = frappe.db.get_value(
             "Sales Person",
             {"employee": emp.name},
@@ -1693,6 +1694,7 @@ def user_login(usr, pwd, device_id=None):
             "roles": roles,
             "employee_id": employee_id,
             "employee_name": employee_name,
+            "designation": designation,
             "sales_person_id": sales_person_id
         }
 
@@ -5397,6 +5399,17 @@ def create_employee_checkin(log_type=None, latitude=None, longitude=None):
             True,
             200,
         )
+    except frappe.ValidationError as e:
+        # Expected business rejections — NOT system faults. HRMS raises
+        # CheckinRadiusExceededError (a ValidationError subclass) when an
+        # office employee punches outside their 300m shift-location geofence,
+        # plus other validation throws (duplicate/too-soon checkin, etc.).
+        # The user just needs the message; don't pollute the Error Log.
+        frappe.clear_messages()
+        return response(
+            str(e) or "Checkin not allowed at this location.",
+            None, False, 422,
+        )
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.create_employee_checkin")
         return response(str(e), None, False, 500)
@@ -6197,8 +6210,15 @@ def create_leave_application(
             200,
         )
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "field_sales.create_leave_application")
         friendly, status = _friendly_leave_error(e)
+        # Only log genuinely-unknown failures (status 500). Known validation
+        # rejections — overlap, no allocation, insufficient balance — are
+        # expected user mistakes already translated into a friendly message;
+        # logging them just spams the Error Log.
+        if status >= 500:
+            frappe.log_error(frappe.get_traceback(), "field_sales.create_leave_application")
+        else:
+            frappe.clear_messages()
         return response(friendly, None, False, status)
 
 
@@ -6337,8 +6357,14 @@ def act_on_leave_application(name=None, action=None, reason=None):
     except frappe.DoesNotExistError:
         return response("Leave Application not found", None, False, 404)
     except Exception as e:
-        frappe.log_error(frappe.get_traceback(), "field_sales.act_on_leave_application")
         friendly, status = _friendly_leave_error(e)
+        # Only log genuinely-unknown failures (status 500). Known validation
+        # rejections (overlap, already-processed, not-current-approver) are
+        # expected and already translated — don't spam the Error Log.
+        if status >= 500:
+            frappe.log_error(frappe.get_traceback(), "field_sales.act_on_leave_application")
+        else:
+            frappe.clear_messages()
         return response(friendly, None, False, status)
 
 
