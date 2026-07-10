@@ -5478,14 +5478,16 @@ def get_leave_types():
     certificate uploader as required for Sick Leave (etc.) without an
     extra round trip."""
     try:
+        # Include Leave Without Pay (is_lwp=1) so employees can apply for it
+        # on mobile too — it exists in the desk/ERP and staff need parity.
         types = frappe.get_all(
             "Leave Type",
-            filters={"is_lwp": 0},
             fields=[
                 "name",
                 "leave_type_name",
                 "max_leaves_allowed",
                 "is_compensatory",
+                "is_lwp",
                 "custom_require_certificate",
             ],
             order_by="name",
