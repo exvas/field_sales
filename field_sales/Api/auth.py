@@ -6701,3 +6701,150 @@ def get_active_company():
         return response(str(e), None, False, 500)
 
         
+
+# ===========================================================================
+# Compensatory Leave Request + Attendance Request (Work From Home / On Duty)
+# Mobile endpoints — mirror create_leave_application. Both HRMS doctypes are
+# submittable; we create them as DRAFT (docstatus=0) so the leave approver
+# reviews + submits in desk (submitting = approval; Comp Off leave gets
+# allocated / WFH attendance applies on that submit). No self-approval.
+# ===========================================================================
+
+
+@frappe.whitelist(methods=["POST"])
+def create_compensatory_leave_request(
+    work_from_date=None, work_end_date=None, half_day=0, half_day_date=None, reason=None
+):
+    """Claim a compensatory-off for a holiday / weekly-off actually worked."""
+    try:
+        data = frappe.request.get_json() or {}
+        work_from_date = work_from_date or data.get("work_from_date")
+        work_end_date = work_end_date or data.get("work_end_date") or work_from_date
+        half_day = half_day if half_day else data.get("half_day", 0)
+        half_day_date = half_day_date or data.get("half_day_date")
+        reason = reason or data.get("reason")
+
+        if not (work_from_date and reason):
+            return response("work_from_date and reason are required", None, False, 400)
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        leave_type = frappe.db.get_value("Leave Type", {"is_compensatory": 1}, "name")
+        if not leave_type:
+            return response("No compensatory Leave Type configured", None, False, 400)
+
+        emp = frappe.get_doc("Employee", employee)
+        doc = frappe.new_doc("Compensatory Leave Request")
+        doc.employee = employee
+        doc.leave_type = leave_type
+        doc.work_from_date = frappe.utils.getdate(work_from_date)
+        doc.work_end_date = frappe.utils.getdate(work_end_date)
+        doc.half_day = 1 if half_day else 0
+        if doc.half_day and half_day_date:
+            doc.half_day_date = frappe.utils.getdate(half_day_date)
+        doc.reason = reason
+        if emp.leave_approver:
+            doc.leave_approver = emp.leave_approver
+        doc.insert(ignore_permissions=True)   # DRAFT — approver submits in desk
+
+        return response(
+            "Compensatory Leave Request created",
+            {"name": doc.name, "leave_type": leave_type, "docstatus": doc.docstatus},
+            True, 200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "create_compensatory_leave_request")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def create_attendance_request(
+    from_date=None, to_date=None, reason=None, explanation=None,
+    half_day=0, half_day_date=None
+):
+    """Request Work-From-Home / On-Duty attendance for a date range."""
+    try:
+        data = frappe.request.get_json() or {}
+        from_date = from_date or data.get("from_date")
+        to_date = to_date or data.get("to_date") or from_date
+        reason = reason or data.get("reason") or "Work From Home"
+        explanation = explanation or data.get("explanation")
+        half_day = half_day if half_day else data.get("half_day", 0)
+        half_day_date = half_day_date or data.get("half_day_date")
+
+        if not from_date:
+            return response("from_date is required", None, False, 400)
+        if reason not in ("Work From Home", "On Duty"):
+            return response("reason must be 'Work From Home' or 'On Duty'", None, False, 400)
+
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+
+        emp = frappe.get_doc("Employee", employee)
+        doc = frappe.new_doc("Attendance Request")
+        doc.employee = employee
+        doc.company = emp.company
+        doc.from_date = frappe.utils.getdate(from_date)
+        doc.to_date = frappe.utils.getdate(to_date)
+        doc.reason = reason
+        doc.explanation = explanation or ""
+        doc.half_day = 1 if half_day else 0
+        if doc.half_day and half_day_date:
+            doc.half_day_date = frappe.utils.getdate(half_day_date)
+        doc.insert(ignore_permissions=True)   # DRAFT — approver submits in desk
+
+        return response(
+            "Attendance Request created",
+            {"name": doc.name, "reason": reason, "docstatus": doc.docstatus},
+            True, 200,
+        )
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "create_attendance_request")
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_compensatory_requests():
+    """List the caller's Compensatory Leave Requests."""
+    try:
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+        rows = frappe.get_all(
+            "Compensatory Leave Request",
+            filters={"employee": employee},
+            fields=["name", "leave_type", "work_from_date", "work_end_date",
+                    "half_day", "reason", "docstatus"],
+            order_by="work_from_date desc", limit_page_length=50,
+        )
+        for r in rows:
+            r["status"] = ("Approved" if r["docstatus"] == 1
+                           else "Cancelled" if r["docstatus"] == 2 else "Pending")
+        return response("ok", rows, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_attendance_requests():
+    """List the caller's Attendance Requests (WFH / On Duty)."""
+    try:
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+        rows = frappe.get_all(
+            "Attendance Request",
+            filters={"employee": employee},
+            fields=["name", "from_date", "to_date", "reason", "explanation",
+                    "half_day", "docstatus"],
+            order_by="from_date desc", limit_page_length=50,
+        )
+        for r in rows:
+            r["status"] = ("Approved" if r["docstatus"] == 1
+                           else "Cancelled" if r["docstatus"] == 2 else "Pending")
+        return response("ok", rows, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
