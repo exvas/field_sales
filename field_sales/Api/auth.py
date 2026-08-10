@@ -5492,7 +5492,27 @@ def get_leave_types():
             ],
             order_by="name",
         )
-        return response("Leave types", types, True, 200)
+        # Curate: only offer types in the active Leave Policy, plus Leave
+        # Without Pay (is_lwp) and Compensatory (is_compensatory). This hides
+        # retired types (e.g. "Leave with pay", "Privilege Leave") that still
+        # exist for history but must not be selectable for new leaves. Driven
+        # by the policy so there are no hard-coded type names.
+        policy_name = (
+            frappe.db.get_single_value("Chundakadan Settings", "annual_leave_policy")
+            if frappe.db.exists("DocType", "Chundakadan Settings") else None
+        )
+        if not policy_name:
+            policy_name = frappe.db.get_value(
+                "Leave Policy", {"docstatus": 1}, "name", order_by="creation desc"
+            )
+        policy_types = set(frappe.get_all(
+            "Leave Policy Detail", filters={"parent": policy_name}, pluck="leave_type"
+        )) if policy_name else set()
+        allowed = [
+            t for t in types
+            if t.get("name") in policy_types or t.get("is_lwp") or t.get("is_compensatory")
+        ]
+        return response("Leave types", allowed, True, 200)
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.get_leave_types")
         return response(str(e), None, False, 500)
