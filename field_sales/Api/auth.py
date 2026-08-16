@@ -5595,6 +5595,16 @@ def get_my_leave_balance():
 
 
 @frappe.whitelist()
+def _strip_holiday_html(text):
+    """Holiday descriptions may be stored as rich-text HTML (ql-editor). Return
+    plain text so the mobile app never shows raw tags. Dynamic: strips whatever
+    HTML is present, regardless of who entered it or how."""
+    if not text:
+        return text
+    import re, html as _html
+    return _html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
+
+
 def get_upcoming_holidays(limit=10):
     """Return upcoming holidays from the calling user's Employee's
     holiday_list, falling back to the company's default_holiday_list.
@@ -5640,7 +5650,7 @@ def get_upcoming_holidays(limit=10):
                 "holidays": [
                     {
                         "holiday_date": str(r.holiday_date),
-                        "description": r.description,
+                        "description": _strip_holiday_html(r.description),
                         "weekly_off": bool(r.weekly_off),
                     } for r in rows
                 ],
