@@ -5853,6 +5853,7 @@ def create_expense_claim(
     company=None,
     remark=None,
     submit=False,
+    attachments=None,
 ):
     """Create (and optionally submit) an Expense Claim for the calling
     user. `expenses` is a list of {expense_date, expense_type,
@@ -5863,6 +5864,7 @@ def create_expense_claim(
         expenses = expenses if expenses is not None else data.get("expenses", [])
         company = company or data.get("company")
         remark = remark or data.get("remark")
+        attachments = attachments if attachments is not None else data.get("attachments", [])
         submit_flag = data.get("submit", submit) if isinstance(submit, bool) else submit
 
         employee = _resolve_caller_employee()
@@ -5895,6 +5897,28 @@ def create_expense_claim(
 
         doc.flags.ignore_mandatory = True
         doc.insert(ignore_permissions=True)
+
+        # Link any uploaded receipt files (uploaded standalone via Frappe's
+        # /api/method/upload_file and passed here as file URLs) to this claim,
+        # so they surface under get_expense_claim_detail.attachments.
+        for _url in (attachments or []):
+            if not _url:
+                continue
+            _existing = frappe.db.get_value("File", {"file_url": _url}, "name")
+            if _existing:
+                frappe.db.set_value("File", _existing, {
+                    "attached_to_doctype": "Expense Claim",
+                    "attached_to_name": doc.name,
+                })
+            else:
+                frappe.get_doc({
+                    "doctype": "File",
+                    "file_url": _url,
+                    "attached_to_doctype": "Expense Claim",
+                    "attached_to_name": doc.name,
+                    "is_private": 1 if str(_url).startswith("/private/") else 0,
+                }).insert(ignore_permissions=True)
+
         if submit_flag:
             try:
                 doc.submit()
