@@ -6050,6 +6050,11 @@ def request_employee_advance(
         doc.purpose = purpose or "Advance request via mobile"
         doc.advance_amount = flt(advance_amount)
         doc.posting_date = frappe.utils.getdate(posting_date) if posting_date else frappe.utils.nowdate()
+        # Employee Advance requires currency + a non-zero exchange_rate (HRMS
+        # validate_exchange_rate throws otherwise). Mobile requests are always in
+        # the company's own currency, so exchange_rate = 1.
+        doc.currency = frappe.get_cached_value("Company", company, "default_currency") or "INR"
+        doc.exchange_rate = 1
         doc.flags.ignore_mandatory = True
         doc.insert(ignore_permissions=True)
 
