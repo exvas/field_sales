@@ -2955,6 +2955,20 @@ def get_newsletter_details(name=None):
         if not row:
             return response("Newsletter not found", None, False, 404)
         row["creation"] = str(row.get("creation") or "")
+        # Image attachments on the Newsletter so the mobile app can show
+        # them below the message (non-image files are skipped to avoid
+        # broken inline images). Files are typically public (/files/...).
+        _img_ext = ("jpg", "jpeg", "png", "gif", "webp", "heic", "bmp")
+        row["attachments"] = [
+            {"file_url": _f.file_url, "file_name": _f.file_name}
+            for _f in frappe.get_all(
+                "File",
+                filters={"attached_to_doctype": "Newsletter",
+                         "attached_to_name": name},
+                fields=["file_url", "file_name"],
+            )
+            if (_f.file_url or "").rsplit(".", 1)[-1].lower() in _img_ext
+        ]
         return response("Newsletter", row, True, 200)
     except Exception as e:
         frappe.log_error(frappe.get_traceback(), "field_sales.get_newsletter_details")
