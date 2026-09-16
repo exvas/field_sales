@@ -2160,6 +2160,30 @@ def get_employee_location_entries(employee=None):
         frappe.log_error(frappe.get_traceback(), "get_employee_location_entries error")
         frappe.throw(_("Failed to fetch employee location entries."))
 
+DISPATCH_FIELDS = [
+    "sales_invoice", "dispatch_status", "pending_reason", "pending_remarks",
+    "transporter_name", "gst_transporter_id", "mode_of_transport", "vehicle_no",
+    "lr_no", "lr_date", "driver_name", "dispatched_on", "expected_delivery_date",
+    "delivery_confirmed_on", "delivery_remarks",
+]
+
+
+def _dispatch_info_map(invoice_names):
+    """Dispatch Log details (chundakadan app) keyed by Sales Invoice name.
+
+    Invoices without a log (e.g. other companies) are simply absent. Returns
+    an empty map when the Dispatch Log doctype is not installed.
+    """
+    if not invoice_names or not frappe.db.exists("DocType", "Dispatch Log"):
+        return {}
+    logs = frappe.get_all(
+        "Dispatch Log",
+        filters={"sales_invoice": ["in", list(invoice_names)]},
+        fields=DISPATCH_FIELDS,
+    )
+    return {log.pop("sales_invoice"): log for log in logs}
+
+
 @frappe.whitelist(allow_guest=False)
 def get_sales_invoice_list():
     sales_person = frappe.request.args.get("sales_person")
@@ -2183,6 +2207,7 @@ def get_sales_invoice_list():
         order_by="creation desc"     )
 
     result = []
+    dispatch_map = _dispatch_info_map([inv.name for inv in invoices])
 
     for inv in invoices:
         items = frappe.get_all(
@@ -2226,7 +2251,8 @@ def get_sales_invoice_list():
             "outstanding_amount": inv.outstanding_amount,
             "status": inv.status,
             "items": items,
-            "payments": payments
+            "payments": payments,
+            "dispatch": dispatch_map.get(inv.name)
         })
 
     return {
@@ -3311,7 +3337,8 @@ def sales_invoice_detail_by_ids():
                     "amount": item.amount
                 }
                 for item in invoice.items
-            ]
+            ],
+            "dispatch": _dispatch_info_map([invoice.name]).get(invoice.name)
         }
 
         return {
