@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 0,
- "autoname": "format:CB-.YYYY.-.#####",
+ "autoname": "CB-.YYYY.-.#####",
  "creation": "2026-05-23 20:30:00.000000",
  "doctype": "DocType",
  "document_type": "Document",
@@ -53,7 +53,10 @@
    "in_list_view": 1,
    "in_standard_filter": 1
   },
-  {"fieldname": "column_break_1", "fieldtype": "Column Break"},
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
   {
    "fieldname": "customer",
    "fieldtype": "Link",
@@ -72,7 +75,11 @@
    "read_only": 1,
    "in_list_view": 1
   },
-  {"fieldname": "section_break_2", "fieldtype": "Section Break", "label": "Cheque Details"},
+  {
+   "fieldname": "section_break_2",
+   "fieldtype": "Section Break",
+   "label": "Cheque Details"
+  },
   {
    "fieldname": "cheque_no",
    "fieldtype": "Data",
@@ -87,7 +94,10 @@
    "fetch_from": "payment_entry.reference_date",
    "read_only": 1
   },
-  {"fieldname": "column_break_3", "fieldtype": "Column Break"},
+  {
+   "fieldname": "column_break_3",
+   "fieldtype": "Column Break"
+  },
   {
    "fieldname": "bank_account",
    "fieldtype": "Link",
@@ -103,7 +113,11 @@
    "fetch_from": "payment_entry.mode_of_payment",
    "read_only": 1
   },
-  {"fieldname": "section_break_bounce", "fieldtype": "Section Break", "label": "Bounce Information"},
+  {
+   "fieldname": "section_break_bounce",
+   "fieldtype": "Section Break",
+   "label": "Bounce Information"
+  },
   {
    "fieldname": "bounce_reason",
    "fieldtype": "Select",
@@ -118,7 +132,10 @@
    "default": "250",
    "reqd": 1
   },
-  {"fieldname": "column_break_bounce", "fieldtype": "Column Break"},
+  {
+   "fieldname": "column_break_bounce",
+   "fieldtype": "Column Break"
+  },
   {
    "fieldname": "charge_to_customer",
    "fieldtype": "Check",
@@ -126,7 +143,11 @@
    "default": "1",
    "description": "If checked, the bounce charge will be billed back to the customer via a Journal Entry."
   },
-  {"fieldname": "section_break_accounts", "fieldtype": "Section Break", "label": "Accounting"},
+  {
+   "fieldname": "section_break_accounts",
+   "fieldtype": "Section Break",
+   "label": "Accounting"
+  },
   {
    "fieldname": "bank_charges_account",
    "fieldtype": "Link",
@@ -135,7 +156,10 @@
    "reqd": 1,
    "description": "Expense account where the bank's bounce fee will be debited."
   },
-  {"fieldname": "column_break_accounts", "fieldtype": "Column Break"},
+  {
+   "fieldname": "column_break_accounts",
+   "fieldtype": "Column Break"
+  },
   {
    "fieldname": "cheque_bounce_income_account",
    "fieldtype": "Link",
@@ -144,7 +168,12 @@
    "description": "Income account credited when recovering the bounce charge from the customer. Required only if Charge to Customer is checked.",
    "depends_on": "eval:doc.charge_to_customer"
   },
-  {"fieldname": "section_break_actions", "fieldtype": "Section Break", "label": "Actions Taken", "collapsible": 1},
+  {
+   "fieldname": "section_break_actions",
+   "fieldtype": "Section Break",
+   "label": "Actions Taken",
+   "collapsible": 1
+  },
   {
    "fieldname": "cancelled_payment_entry",
    "fieldtype": "Link",
@@ -159,7 +188,10 @@
    "options": "Journal Entry",
    "read_only": 1
   },
-  {"fieldname": "column_break_actions", "fieldtype": "Column Break"},
+  {
+   "fieldname": "column_break_actions",
+   "fieldtype": "Column Break"
+  },
   {
    "fieldname": "customer_debit_journal_entry",
    "fieldtype": "Link",
@@ -167,7 +199,11 @@
    "options": "Journal Entry",
    "read_only": 1
   },
-  {"fieldname": "section_break_remarks", "fieldtype": "Section Break", "label": "Remarks"},
+  {
+   "fieldname": "section_break_remarks",
+   "fieldtype": "Section Break",
+   "label": "Remarks"
+  },
   {
    "fieldname": "remarks",
    "fieldtype": "Text",

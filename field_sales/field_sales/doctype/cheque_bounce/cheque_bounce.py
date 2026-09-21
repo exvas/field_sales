@@ -59,6 +59,11 @@ class ChequeBounce(Document):
         # invoices or has downstream submitted docs — that's the right
         # behaviour, surface the error to the user with context.
         try:
+            # Records that merely *describe* this payment (Post Dated Cheque,
+            # this Cheque Bounce) must not block the cancellation the bounce
+            # exists to perform. Frappe checks back-links after on_cancel,
+            # where ERPNext resets ignore_linked_doctypes, so use the flag.
+            pe.flags.ignore_links = True
             pe.cancel()
             self.db_set("cancelled_payment_entry", pe.name)
         except frappe.LinkExistsError as e:
@@ -70,12 +75,13 @@ class ChequeBounce(Document):
                 ).format(self.payment_entry, str(e))
             )
 
-        # Step 2: bank charges JE
-        bank_je = self._make_bank_charge_je(pe)
-        self.db_set("bank_charge_journal_entry", bank_je.name)
+        # Step 2: bank charges JE — only when the bank actually charged
+        if flt(self.bounce_charge_amount):
+            bank_je = self._make_bank_charge_je(pe)
+            self.db_set("bank_charge_journal_entry", bank_je.name)
 
         # Step 3: customer recovery JE (optional)
-        if self.charge_to_customer:
+        if self.charge_to_customer and flt(self.bounce_charge_amount):
             cust_je = self._make_customer_debit_je(pe)
             self.db_set("customer_debit_journal_entry", cust_je.name)
 
