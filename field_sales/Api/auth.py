@@ -1587,7 +1587,7 @@ import json
 import base64
 import frappe
 from frappe import _
-from frappe.utils import now, nowdate, flt
+from frappe.utils import now, nowdate, flt, getdate, date_diff
 from frappe.model.document import Document
 from frappe.utils.password import set_encrypted_password
 from bs4 import BeautifulSoup
@@ -2182,6 +2182,66 @@ def _dispatch_info_map(invoice_names):
         fields=DISPATCH_FIELDS,
     )
     return {log.pop("sales_invoice"): log for log in logs}
+
+
+PDC_FIELDS = [
+    "name", "cheque_no", "cheque_date", "posting_date", "amount", "status",
+    "customer", "customer_name", "bank_name", "sales_person", "payment_entry",
+    "bounce_reason", "remarks",
+]
+
+
+@frappe.whitelist(allow_guest=False)
+def get_post_dated_cheques():
+    """Post dated cheques a salesman needs to follow up.
+
+    Query params: sales_person (required), status (optional, default Pending),
+    from_date / to_date (optional, on the cheque date).
+    """
+    args = frappe.request.args
+    sales_person = args.get("sales_person")
+    if not sales_person:
+        return {"status": "error", "message": "Missing sales_person parameter"}
+    if not frappe.db.exists("DocType", "Post Dated Cheque"):
+        return {"status": "success", "sales_person": sales_person, "cheque_count": 0, "cheques": []}
+
+    filters = {"docstatus": 1, "sales_person": sales_person}
+    status = args.get("status")
+    if status and status != "All":
+        filters["status"] = status
+    elif not status:
+        filters["status"] = "Pending"
+    if args.get("from_date") and args.get("to_date"):
+        filters["cheque_date"] = ["between", [args.get("from_date"), args.get("to_date")]]
+
+    cheques = frappe.get_all(
+        "Post Dated Cheque", filters=filters, fields=PDC_FIELDS, order_by="cheque_date asc"
+    )
+    references = frappe.get_all(
+        "Post Dated Cheque Reference",
+        filters={"parent": ["in", [c["name"] for c in cheques]]} if cheques else {"parent": ""},
+        fields=["parent", "sales_invoice", "allocated_amount"],
+    )
+    by_cheque = {}
+    for ref in references:
+        by_cheque.setdefault(ref.parent, []).append(
+            {"sales_invoice": ref.sales_invoice, "allocated_amount": ref.allocated_amount}
+        )
+
+    today = getdate(nowdate())
+    for cheque in cheques:
+        cheque["invoices"] = by_cheque.get(cheque["name"], [])
+        cheque["days_to_due"] = (
+            date_diff(cheque["cheque_date"], today) if cheque.get("cheque_date") else None
+        )
+
+    return {
+        "status": "success",
+        "sales_person": sales_person,
+        "cheque_count": len(cheques),
+        "total_amount": sum(flt(c["amount"]) for c in cheques),
+        "cheques": cheques,
+    }
 
 
 @frappe.whitelist(allow_guest=False)
