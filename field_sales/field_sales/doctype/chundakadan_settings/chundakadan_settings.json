@@ -10,6 +10,9 @@
   "google_oauth_web_client_id",
   "section_visibility",
   "view_all_transaction_role",
+  "section_work_summary",
+  "enable_work_summary_reminder",
+  "work_summary_reminder_time",
   "section_item_approval",
   "enable_item_approval",
   "item_approval_role",
@@ -55,6 +58,25 @@
    "fieldtype": "Link",
    "label": "View All Transaction Role",
    "options": "Role"
+  },
+  {
+   "fieldname": "section_work_summary",
+   "fieldtype": "Section Break",
+   "label": "Daily Work Summary"
+  },
+  {
+   "default": "0",
+   "description": "Push a reminder to anyone who has not sent the day's work summary.",
+   "fieldname": "enable_work_summary_reminder",
+   "fieldtype": "Check",
+   "label": "Remind Staff To Submit"
+  },
+  {
+   "default": "18:00:00",
+   "depends_on": "enable_work_summary_reminder",
+   "fieldname": "work_summary_reminder_time",
+   "fieldtype": "Time",
+   "label": "Reminder Time"
   },
   {
    "fieldname": "section_item_approval",

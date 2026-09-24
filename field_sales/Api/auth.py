@@ -7077,3 +7077,161 @@ def reject_items(items=None, reason=None):
         return response(str(e) or "Not allowed", None, False, 403)
     except Exception as e:
         return response(str(e), None, False, 500)
+
+
+# ---------------------------------------------------------------------------
+# Daily Work Summary — the mobile side. The rules live in
+# chundakadan.chundakadan.api.work_summary; these wrappers only resolve the
+# caller's employee and shape the payload for the app.
+# ---------------------------------------------------------------------------
+
+WORK_SUMMARY_FIELDS = [
+    "name", "employee", "employee_name", "department", "work_date",
+    "custom_approval_status", "current_approver", "current_approval_index",
+    "hod_remarks", "gm_remarks", "return_reason", "docstatus",
+]
+
+
+def _work_summary():
+    from chundakadan.chundakadan.api import work_summary
+
+    return work_summary
+
+
+def _summary_payload(name):
+    doc = frappe.get_doc("Daily Work Summary", name)
+    data = {field: doc.get(field) for field in WORK_SUMMARY_FIELDS}
+    data["tasks"] = [
+        {"idx": row.idx, "task": row.task, "work_description": row.work_description}
+        for row in doc.tasks
+    ]
+    return data
+
+
+@frappe.whitelist()
+def work_summary_access():
+    """Everybody may write one; only chain members get the team tab."""
+    try:
+        ws = _work_summary()
+        employee = _resolve_caller_employee()
+        pending = ws.waiting_on_me()
+        return response("ok", {
+            "can_submit": bool(employee),
+            "employee": employee,
+            "is_approver": bool(pending),
+            "pending_count": len(pending),
+        }, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_my_work_summaries():
+    """The caller's own summaries, newest first. `work_date` returns one day."""
+    args = frappe.request.args
+    try:
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+        filters = {"employee": employee, "docstatus": ["<", 2]}
+        if args.get("work_date"):
+            filters["work_date"] = args.get("work_date")
+        names = frappe.get_all(
+            "Daily Work Summary", filters=filters, pluck="name",
+            order_by="work_date desc", limit_page_length=int(args.get("limit") or 30),
+            ignore_permissions=True,
+        )
+        return response("ok", {"summaries": [_summary_payload(n) for n in names]}, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def save_work_summary(work_date=None, tasks=None, docname=None, send=0):
+    """Create or update the caller's summary for a day, optionally sending it."""
+    import json as _json
+
+    try:
+        ws = _work_summary()
+        employee = _resolve_caller_employee()
+        if not employee:
+            return response("No Employee linked", None, False, 404)
+        if isinstance(tasks, str):
+            tasks = _json.loads(tasks or "[]")
+        tasks = [
+            {"task": (t.get("task") or "").strip(),
+             "work_description": (t.get("work_description") or "").strip()}
+            for t in (tasks or [])
+            if (t.get("task") or "").strip()
+        ]
+        if not tasks:
+            return response("Add at least one task", None, False, 500)
+
+        work_date = work_date or frappe.utils.today()
+        if not docname:
+            docname = frappe.db.get_value(
+                "Daily Work Summary",
+                {"employee": employee, "work_date": work_date, "docstatus": ["<", 2]},
+                "name",
+            )
+        if docname:
+            doc = frappe.get_doc("Daily Work Summary", docname)
+            if doc.custom_approval_status not in (ws.STATUS_DRAFT, ws.STATUS_RETURNED):
+                return response("This summary has already been sent", None, False, 403)
+        else:
+            doc = frappe.new_doc("Daily Work Summary")
+            doc.employee = employee
+            doc.work_date = work_date
+        doc.set("tasks", tasks)
+        doc.save(ignore_permissions=True)
+
+        if frappe.utils.cint(send):
+            ws.send_for_remarks(doc.name)
+        return response("ok", _summary_payload(doc.name), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def send_work_summary(docname=None):
+    try:
+        _work_summary().send_for_remarks(docname)
+        return response("ok", _summary_payload(docname), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_team_work_summaries():
+    """Summaries standing at the caller's step of the chain."""
+    try:
+        rows = _work_summary().waiting_on_me()
+        return response("ok", {"summaries": [_summary_payload(r["name"]) for r in rows]}, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def work_summary_add_remarks(docname=None, remarks=None):
+    try:
+        result = _work_summary().add_remarks(docname, remarks)
+        return response("ok", result, True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def work_summary_return(docname=None, reason=None):
+    try:
+        result = _work_summary().return_for_correction(docname, reason)
+        return response("ok", result, True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
