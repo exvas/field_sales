@@ -7008,3 +7008,72 @@ def get_my_attendance_requests():
         return response("ok", rows, True, 200)
     except Exception as e:
         return response(str(e), None, False, 500)
+
+
+# ---------------------------------------------------------------------------
+# Item Approval — the mobile side of chundakadan's Item approval feature.
+# The rules live in chundakadan.chundakadan.api.item_approval; these are thin
+# wrappers so the app and the desk can never drift apart.
+# ---------------------------------------------------------------------------
+
+
+def _item_approval():
+    """Import lazily — a site without the chundakadan app still loads this
+    module."""
+    from chundakadan.chundakadan.api import item_approval
+
+    return item_approval
+
+
+@frappe.whitelist()
+def item_approval_access():
+    """Does the caller get the Item Approvals tile, and how many are waiting."""
+    try:
+        return response("ok", _item_approval().access(), True, 200)
+    except ImportError:
+        return response("ok", {"enabled": False, "can_approve": False,
+                               "role": None, "pending_count": 0}, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_pending_items():
+    """Items waiting for the caller to approve.
+
+    Query params: search (optional), limit / start (optional).
+    """
+    args = frappe.request.args
+    try:
+        data = _item_approval().pending_items(
+            search=args.get("search"),
+            limit=args.get("limit") or 50,
+            start=args.get("start") or 0,
+        )
+        return response("ok", data, True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def approve_items(items=None, changes=None):
+    """Approve one item (optionally correcting it first) or many at once."""
+    try:
+        return response("ok", _item_approval().approve(items, changes), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def reject_items(items=None, reason=None):
+    """Reject one or many items with a reason."""
+    try:
+        return response("ok", _item_approval().reject(items, reason), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)

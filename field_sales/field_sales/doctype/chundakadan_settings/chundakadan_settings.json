@@ -10,6 +10,9 @@
   "google_oauth_web_client_id",
   "section_visibility",
   "view_all_transaction_role",
+  "section_item_approval",
+  "enable_item_approval",
+  "item_approval_role",
   "section_sales_person_details",
   "sales_person_details",
   "section_mop_mapping",
@@ -29,17 +32,17 @@
    "label": "Enable Stock Validation For Mobile App"
   },
   {
+   "description": "Fallback company when the logged-in user's Employee record has no company set. Leave blank to use the first Company in the database.",
    "fieldname": "default_company",
    "fieldtype": "Link",
    "label": "Default Company for Mobile App",
-   "options": "Company",
-   "description": "Fallback company when the logged-in user's Employee record has no company set. Leave blank to use the first Company in the database."
+   "options": "Company"
   },
   {
+   "description": "OAuth Web Client ID from Google Cloud Console (the *Web application* type, not Android). The mobile sends an ID token with this as the audience; backend verifies. Leave blank to disable Google Sign-In.",
    "fieldname": "google_oauth_web_client_id",
    "fieldtype": "Data",
-   "label": "Google OAuth Web Client ID",
-   "description": "OAuth Web Client ID from Google Cloud Console (the *Web application* type, not Android). The mobile sends an ID token with this as the audience; backend verifies. Leave blank to disable Google Sign-In."
+   "label": "Google OAuth Web Client ID"
   },
   {
    "fieldname": "section_visibility",
@@ -47,11 +50,31 @@
    "label": "Mobile Visibility"
   },
   {
+   "description": "Sales people in this Role bypass the per-sales-person filter on Mobile API list endpoints (Quotation, Sales Order, Payment Entry, Sales Invoice). Useful for sales managers who need to oversee everyone's pipeline from the mobile app. Leave blank to keep the default behaviour (each sales person sees only their own).",
    "fieldname": "view_all_transaction_role",
    "fieldtype": "Link",
    "label": "View All Transaction Role",
-   "options": "Role",
-   "description": "Sales people in this Role bypass the per-sales-person filter on Mobile API list endpoints (Quotation, Sales Order, Payment Entry, Sales Invoice). Useful for sales managers who need to oversee everyone's pipeline from the mobile app. Leave blank to keep the default behaviour (each sales person sees only their own)."
+   "options": "Role"
+  },
+  {
+   "fieldname": "section_item_approval",
+   "fieldtype": "Section Break",
+   "label": "Item Approval"
+  },
+  {
+   "default": "0",
+   "description": "New Items are held as Pending and kept disabled until the approver clears them.",
+   "fieldname": "enable_item_approval",
+   "fieldtype": "Check",
+   "label": "Enable Item Approval"
+  },
+  {
+   "depends_on": "enable_item_approval",
+   "description": "The one role that may approve or reject new Items, on the desk and in the mobile app.",
+   "fieldname": "item_approval_role",
+   "fieldtype": "Link",
+   "label": "Item Approval Role",
+   "options": "Role"
   },
   {
    "fieldname": "section_sales_person_details",
@@ -59,11 +82,11 @@
    "label": "Sales Person Details"
   },
   {
+   "description": "Per Sales Person defaults applied to mobile-app transactions: warehouse, cost center, price list, default mode of payment. Optional \u2014 rows are read on demand by the mobile create flows; sales persons without a row use system defaults.",
    "fieldname": "sales_person_details",
    "fieldtype": "Table",
    "label": "Sales Person Details",
-   "options": "Chundakadan Sales Person Detail",
-   "description": "Per Sales Person defaults applied to mobile-app transactions: warehouse, cost center, price list, default mode of payment. Optional — rows are read on demand by the mobile create flows; sales persons without a row use system defaults."
+   "options": "Chundakadan Sales Person Detail"
   },
   {
    "fieldname": "section_mop_mapping",
@@ -71,11 +94,11 @@
    "label": "Sales Person Mode of Payment Mapping"
   },
   {
+   "description": "Per Sales Person + Company + Mode of Payment override of the paid_to account on Payment Entries created via the mobile app. If a sales person submits a PE and no row matches (sales_person, company, mode_of_payment) here, the API returns 400 \u2014 every sales person must be configured for every mode they will use.",
    "fieldname": "mop_mapping",
    "fieldtype": "Table",
    "label": "Sales Person MOP Mapping",
-   "options": "Chundakadan Sales Person MOP",
-   "description": "Per Sales Person + Company + Mode of Payment override of the paid_to account on Payment Entries created via the mobile app. If a sales person submits a PE and no row matches (sales_person, company, mode_of_payment) here, the API returns 400 — every sales person must be configured for every mode they will use."
+   "options": "Chundakadan Sales Person MOP"
   },
   {
    "fieldname": "section_manager_details",
@@ -83,11 +106,11 @@
    "label": "Manager Details"
   },
   {
+   "description": "Users in this table get manager privileges in the mobile app: view all sales persons' transactions, and (per-flag) edit/submit/approve them. Use this for area sales managers and admins who need oversight without owning a Sales Person record.",
    "fieldname": "manager_details",
    "fieldtype": "Table",
    "label": "Manager Details",
-   "options": "Chundakadan Manager Detail",
-   "description": "Users in this table get manager privileges in the mobile app: view all sales persons' transactions, and (per-flag) edit/submit/approve them. Use this for area sales managers and admins who need oversight without owning a Sales Person record."
+   "options": "Chundakadan Manager Detail"
   },
   {
    "fieldname": "section_annual_leaves",
@@ -96,25 +119,25 @@
   },
   {
    "default": "0",
+   "description": "When ON, a daily scheduler checks the Run Date below and, on the matching day each year, creates Leave Allocation rows for every Active Employee per the policy rows below.",
    "fieldname": "auto_allocate_annual_leaves",
    "fieldtype": "Check",
-   "label": "Auto-Allocate Annual Leaves",
-   "description": "When ON, a daily scheduler checks the Run Date below and, on the matching day each year, creates Leave Allocation rows for every Active Employee per the policy rows below."
+   "label": "Auto-Allocate Annual Leaves"
   },
   {
+   "depends_on": "auto_allocate_annual_leaves",
+   "description": "Day-of-year the auto-allocation fires. Set to the fiscal-year start (e.g. April 1 for India). The year part is ignored \u2014 only month + day matter.",
    "fieldname": "annual_allocation_run_date",
    "fieldtype": "Date",
-   "label": "Annual Allocation Run Date",
-   "depends_on": "auto_allocate_annual_leaves",
-   "description": "Day-of-year the auto-allocation fires. Set to the fiscal-year start (e.g. April 1 for India). The year part is ignored — only month + day matter."
+   "label": "Annual Allocation Run Date"
   },
   {
+   "depends_on": "auto_allocate_annual_leaves",
+   "description": "Standard ERPNext Leave Policy whose Leave Policy Detail rows (leave_type + annual_allocation) drive the auto-allocator and the per-Employee 'Allocate Annual Leaves' HR Action. Reuses /app/leave-policy so HR maintains one source of truth.",
    "fieldname": "annual_leave_policy",
    "fieldtype": "Link",
-   "options": "Leave Policy",
    "label": "Annual Leave Policy",
-   "depends_on": "auto_allocate_annual_leaves",
-   "description": "Standard ERPNext Leave Policy whose Leave Policy Detail rows (leave_type + annual_allocation) drive the auto-allocator and the per-Employee 'Allocate Annual Leaves' HR Action. Reuses /app/leave-policy so HR maintains one source of truth."
+   "options": "Leave Policy"
   }
  ],
  "grid_page_length": 50,
