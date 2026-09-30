@@ -7283,3 +7283,66 @@ def work_summary_return(docname=None, reason=None):
         return response(str(e) or "Not allowed", None, False, 403)
     except Exception as e:
         return response(str(e), None, False, 500)
+
+
+# ---------------------------------------------------------------------------
+# Customer Approval — the mobile side. Rules live in
+# chundakadan.chundakadan.api.customer_approval; these are thin wrappers.
+# ---------------------------------------------------------------------------
+
+
+def _customer_approval():
+    from chundakadan.chundakadan.api import customer_approval
+
+    return customer_approval
+
+
+@frappe.whitelist()
+def customer_approval_access():
+    """Does the caller get the Customer Approvals tile, and how many wait."""
+    try:
+        return response("ok", _customer_approval().access(), True, 200)
+    except ImportError:
+        return response("ok", {"enabled": False, "can_approve": False,
+                               "role": None, "pending_count": 0}, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_pending_customers():
+    """Customers waiting for the caller to approve. Params: search, limit, start."""
+    args = frappe.request.args
+    try:
+        data = _customer_approval().pending_customers(
+            search=args.get("search"),
+            limit=args.get("limit") or 50,
+            start=args.get("start") or 0,
+        )
+        return response("ok", data, True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def approve_customers(customers=None, changes=None):
+    """Approve one customer (optionally correcting it first) or many at once."""
+    try:
+        return response("ok", _customer_approval().approve(customers, changes), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def reject_customers(customers=None, reason=None):
+    """Reject one or many customers with a reason."""
+    try:
+        return response("ok", _customer_approval().reject(customers, reason), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)

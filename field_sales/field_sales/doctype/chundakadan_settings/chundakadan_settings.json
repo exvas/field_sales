@@ -10,6 +10,9 @@
   "google_oauth_web_client_id",
   "section_visibility",
   "view_all_transaction_role",
+  "section_customer_approval",
+  "enable_customer_approval",
+  "customer_approval_role",
   "section_work_summary",
   "enable_work_summary_reminder",
   "work_summary_reminder_time",
@@ -57,6 +60,26 @@
    "fieldname": "view_all_transaction_role",
    "fieldtype": "Link",
    "label": "View All Transaction Role",
+   "options": "Role"
+  },
+  {
+   "fieldname": "section_customer_approval",
+   "fieldtype": "Section Break",
+   "label": "Customer Approval"
+  },
+  {
+   "default": "0",
+   "description": "New Customers are held as Pending and kept disabled until the approver clears them.",
+   "fieldname": "enable_customer_approval",
+   "fieldtype": "Check",
+   "label": "Enable Customer Approval"
+  },
+  {
+   "depends_on": "enable_customer_approval",
+   "description": "The one role that may approve or reject new Customers, on the desk and in the mobile app.",
+   "fieldname": "customer_approval_role",
+   "fieldtype": "Link",
+   "label": "Customer Approval Role",
    "options": "Role"
   },
   {
