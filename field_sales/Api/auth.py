@@ -2200,12 +2200,15 @@ def get_post_dated_cheques():
     """
     args = frappe.request.args
     sales_person = args.get("sales_person")
-    if not sales_person:
+    bypass = _caller_has_view_all_role()
+    if not bypass and not sales_person:
         return {"status": "error", "message": "Missing sales_person parameter"}
     if not frappe.db.exists("DocType", "Post Dated Cheque"):
         return {"status": "success", "sales_person": sales_person, "cheque_count": 0, "cheques": []}
 
-    filters = {"docstatus": 1, "sales_person": sales_person}
+    filters = {"docstatus": 1}
+    if sales_person:
+        filters["sales_person"] = sales_person
     status = args.get("status")
     if status and status != "All":
         filters["status"] = status
@@ -2247,19 +2250,25 @@ def get_post_dated_cheques():
 @frappe.whitelist(allow_guest=False)
 def get_sales_invoice_list():
     sales_person = frappe.request.args.get("sales_person")
-    if not sales_person:
+    # A manager under Chundakadan Settings (View All Transaction Role, or a
+    # Manager Details row) sees every executive's invoices, not just their own.
+    bypass = _caller_has_view_all_role()
+    if not bypass and not sales_person:
         return {
             "status": "error",
             "message": "Missing sales_person parameter"
         }
 
+    invoice_filters = {"docstatus": 1, "is_return": 0}
+    if not bypass:
+        invoice_filters["custom_sales_person"] = sales_person
+    elif sales_person:
+        # a manager may still ask for one executive
+        invoice_filters["custom_sales_person"] = sales_person
+
     invoices = frappe.get_all(
         "Sales Invoice",
-        filters={
-            "docstatus": 1,
-            "custom_sales_person": sales_person,
-            "is_return": 0 
-        },
+        filters=invoice_filters,
         fields=[
             "name", "customer", "posting_date", "due_date",
             "grand_total", "outstanding_amount", "status"
@@ -2642,17 +2651,17 @@ def create_payment_entry_from_sales_invoices():
 @frappe.whitelist(allow_guest=True)
 def get_sales_returns(sales_person=None, invoice_id=None):
     try:
-        if not sales_person:
+        bypass = _caller_has_view_all_role()
+        if not bypass and not sales_person:
             return {
                 "status": "error",
                 "message": "Sales Person ID is required",
                 "code": 400
             }
 
-        filters = {
-            "is_return": 1,
-            "custom_sales_person": sales_person
-        }
+        filters = {"is_return": 1}
+        if sales_person:
+            filters["custom_sales_person"] = sales_person
 
         if invoice_id:
             filters["return_against"] = invoice_id
@@ -2698,9 +2707,10 @@ def payment_entry_status():
     customer_name = frappe.request.args.get("customer_name")
     sales_person = frappe.request.args.get("sales_person")
 
+    bypass = _caller_has_view_all_role()
     if not customer_name:
         return {"status": "error", "message": "Missing customer_name"}
-    if not sales_person:
+    if not bypass and not sales_person:
         return {"status": "error", "message": "Missing sales_person"}
 
     # Surface BOTH drafts (docstatus=0) and submitted (docstatus=1) PEs.
@@ -2709,12 +2719,11 @@ def payment_entry_status():
     # excluded as those are dead records.
     payment_entries = frappe.get_all(
         "Payment Entry",
-        filters={
+        filters=_with_sales_person({
             "party_type": "Customer",
             "party": customer_name,
-            "custom_sales_person": sales_person,
             "docstatus": ["in", [0, 1]],
-        },
+        }, sales_person, "custom_sales_person"),
         fields=["name", "posting_date", "paid_amount", "reference_no", "docstatus"],
         order_by="creation desc",
     )
@@ -4040,6 +4049,14 @@ def get_mop_default_account(mode_of_payment=None, company=None):
         {"parent": mode_of_payment, "company": company},
         "default_account",
     )
+
+
+def _with_sales_person(filters, sales_person, fieldname="custom_sales_person"):
+    """Add the sales-person filter unless the caller is a view-all manager
+    and asked for nobody in particular."""
+    if sales_person:
+        filters[fieldname] = sales_person
+    return filters
 
 
 def _caller_has_view_all_role():
