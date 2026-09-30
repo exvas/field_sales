@@ -7224,10 +7224,41 @@ def send_work_summary(docname=None):
 
 @frappe.whitelist()
 def get_team_work_summaries():
-    """Summaries standing at the caller's step of the chain."""
+    """Summaries the caller follows.
+
+    Query param `scope`: "waiting" (default) is their own step's queue;
+    "all" is every summary from the departments they head.
+    """
+    scope = frappe.request.args.get("scope") or "waiting"
     try:
-        rows = _work_summary().waiting_on_me()
-        return response("ok", {"summaries": [_summary_payload(r["name"]) for r in rows]}, True, 200)
+        rows = _work_summary().team_summaries(scope=scope)
+        return response("ok", {
+            "scope": scope,
+            "summaries": [_summary_payload(r["name"]) for r in rows],
+        }, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_work_summary_comments():
+    """Notes left on one summary. Query param: docname."""
+    try:
+        rows = _work_summary().comments(frappe.request.args.get("docname"))
+        return response("ok", {"comments": rows}, True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def work_summary_comment(docname=None, comment=None):
+    """Leave a note on a summary without touching the approval chain."""
+    try:
+        return response("ok", _work_summary().add_comment(docname, comment), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
     except Exception as e:
         return response(str(e), None, False, 500)
 
