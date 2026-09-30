@@ -7346,3 +7346,55 @@ def reject_customers(customers=None, reason=None):
         return response(str(e) or "Not allowed", None, False, 403)
     except Exception as e:
         return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def get_sales_collection_summary():
+    """Sales against collection for the mobile app.
+
+    Query params: from_date, to_date (required), group_by (Sales Person |
+    Brand | Customer | Day | Month), plus optional sales_person, brand and
+    customer. Runs the same report the desk uses, so the two can never
+    disagree.
+    """
+    args = frappe.request.args
+    try:
+        from chundakadan.chundakadan.report.sales_and_collection_summary import (
+            sales_and_collection_summary as report,
+        )
+
+        filters = {
+            "company": args.get("company") or frappe.db.get_single_value(
+                "Chundakadan Settings", "default_company"
+            ) or frappe.defaults.get_user_default("Company"),
+            "from_date": args.get("from_date"),
+            "to_date": args.get("to_date"),
+            "group_by": args.get("group_by") or "Sales Person",
+        }
+        for key in ("sales_person", "brand", "customer"):
+            if args.get(key):
+                filters[key] = args.get(key)
+
+        # a salesman only ever sees their own numbers; a view-all manager
+        # sees the team, and may still narrow to one executive
+        if not _caller_has_view_all_role():
+            own = _resolve_caller_sales_person()
+            if not own:
+                return response("No Sales Person linked", None, False, 404)
+            filters["sales_person"] = own
+
+        columns, rows = report.execute(filters)
+        totals = {"sales": 0, "collection": 0, "invoices": 0, "receipts": 0, "qty": 0}
+        for row in rows:
+            for key in totals:
+                totals[key] = totals[key] + (row.get(key) or 0)
+        totals["balance"] = totals["sales"] - totals["collection"]
+        return response("ok", {
+            "group_by": filters["group_by"],
+            "columns": [{"label": c.get("label"), "fieldname": c.get("fieldname"),
+                         "fieldtype": c.get("fieldtype")} for c in columns],
+            "rows": rows,
+            "totals": totals,
+        }, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
