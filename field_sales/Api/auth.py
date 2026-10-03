@@ -7193,8 +7193,11 @@ def save_work_summary(work_date=None, tasks=None, docname=None, send=0):
             )
         if docname:
             doc = frappe.get_doc("Daily Work Summary", docname)
-            if doc.custom_approval_status not in (ws.STATUS_DRAFT, ws.STATUS_RETURNED):
-                return response("This summary has already been sent", None, False, 403)
+            # saving now sends, so the day's summary is Pending from the first
+            # save; the employee must still be able to add to it during the day,
+            # right up until the GM closes it
+            if doc.custom_approval_status in ws.FINAL_STATES or int(doc.docstatus or 0) == 1:
+                return response("This summary has already been closed", None, False, 403)
         else:
             doc = frappe.new_doc("Daily Work Summary")
             doc.employee = employee
