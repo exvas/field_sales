@@ -7401,3 +7401,50 @@ def get_sales_collection_summary():
         }, True, 200)
     except Exception as e:
         return response(str(e), None, False, 500)
+
+
+# ---------------------------------------------------------------------------
+# Grievances. The rules live in chundakadan.chundakadan.api.grievance; these
+# wrappers only shape the payload for the app.
+# ---------------------------------------------------------------------------
+
+
+def _grievance():
+    from chundakadan.chundakadan.api import grievance
+
+    return grievance
+
+
+@frappe.whitelist()
+def grievance_types():
+    """The predefined list the employee picks from."""
+    try:
+        return response("ok", _grievance().grievance_types(), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist(methods=["POST"])
+def raise_grievance(grievance_type=None, description=None):
+    """Record a grievance for the signed-in employee."""
+    try:
+        result = _grievance().raise_grievance(grievance_type, description)
+        return response("ok", result, True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
+@frappe.whitelist()
+def my_grievances():
+    """What the caller has raised. Nobody else's, ever."""
+    try:
+        limit = frappe.request.args.get("limit") if frappe.request else None
+        return response("ok", _grievance().my_grievances(limit or 20), True, 200)
+    except frappe.PermissionError as e:
+        return response(str(e) or "Not allowed", None, False, 403)
+    except Exception as e:
+        return response(str(e), None, False, 500)
