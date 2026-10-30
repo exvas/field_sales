@@ -20,5 +20,5 @@ jobs:
       app: field_sales
       frappe_versions: '["version-15"]'
       draft_frappe_versions: '["version-15"]'
-      erpnext: false
+      hrms: true
       runs_on: '"ubuntu-latest"'
