@@ -35,11 +35,15 @@ class TestCustomerDuesApi(FrappeTestCase):
 
 	def _clear_previous(self):
 		names = frappe.get_all("Sales Invoice", filters={"customer": self.customer}, pluck="name")
-		if not names:
-			return
-		frappe.db.delete("GL Entry", {"voucher_type": "Sales Invoice", "voucher_no": ["in", names]})
-		frappe.db.delete("Sales Invoice Item", {"parent": ["in", names]})
-		frappe.db.delete("Sales Invoice", {"name": ["in", names]})
+		if names:
+			frappe.db.delete("GL Entry", {"voucher_type": "Sales Invoice", "voucher_no": ["in", names]})
+			frappe.db.delete("Sales Invoice Item", {"parent": ["in", names]})
+			frappe.db.delete("Sales Invoice", {"name": ["in", names]})
+		receipts = frappe.get_all("Payment Entry", filters={"party": self.customer}, pluck="name")
+		if receipts:
+			frappe.db.delete("GL Entry", {"voucher_type": "Payment Entry", "voucher_no": ["in", receipts]})
+			frappe.db.delete("Payment Entry Reference", {"parent": ["in", receipts]})
+			frappe.db.delete("Payment Entry", {"name": ["in", receipts]})
 
 	def _two_sales_people(self):
 		names = [
@@ -101,13 +105,13 @@ class TestCustomerDuesApi(FrappeTestCase):
 
 	def test_a_manager_sees_the_whole_team(self):
 		rows = self._rows(self._call(customer=self.customer))
-		self.assertEqual(flt(sum(r["outstanding"] for r in rows), 2), 5000)
+		self.assertEqual(flt(sum(r["due"] for r in rows), 2), 5000)
 
 	def test_a_salesman_sees_only_their_own(self):
 		"""The gate that matters: an executive must not be shown another
 		executive's customers or their money."""
 		rows = self._rows(self._call(view_all=False, own=self.people[0], customer=self.customer))
-		self.assertEqual(flt(sum(r["outstanding"] for r in rows), 2), 1000)
+		self.assertEqual(flt(sum(r["due"] for r in rows), 2), 1000)
 		self.assertEqual({r["sales_person"] for r in rows}, {self.people[0]})
 
 	def test_a_salesman_cannot_ask_for_somebody_else(self):
@@ -121,7 +125,7 @@ class TestCustomerDuesApi(FrappeTestCase):
 				sales_person=self.people[1],
 			)
 		)
-		self.assertEqual(flt(sum(r["outstanding"] for r in rows), 2), 1000)
+		self.assertEqual(flt(sum(r["due"] for r in rows), 2), 1000)
 
 	def test_a_login_with_no_sales_person_is_refused(self):
 		payload = self._call(view_all=False, own=None)
@@ -129,13 +133,13 @@ class TestCustomerDuesApi(FrappeTestCase):
 
 	def test_a_manager_can_narrow_to_one_executive(self):
 		rows = self._rows(self._call(customer=self.customer, sales_person=self.people[1]))
-		self.assertEqual(flt(sum(r["outstanding"] for r in rows), 2), 4000)
+		self.assertEqual(flt(sum(r["due"] for r in rows), 2), 4000)
 
 	def test_the_totals_describe_the_rows(self):
 		payload = self._call(customer=self.customer)
 		totals = payload["data"]["totals"]
 		rows = self._rows(payload)
-		self.assertEqual(flt(totals["outstanding"], 2), flt(sum(r["outstanding"] for r in rows), 2))
+		self.assertEqual(flt(totals["due"], 2), flt(sum(r["due"] for r in rows), 2))
 		self.assertEqual(totals["customers"], len({r["customer"] for r in rows}))
 
 	def test_detail_gives_a_row_per_invoice(self):
@@ -144,10 +148,51 @@ class TestCustomerDuesApi(FrappeTestCase):
 		rows = self._rows(payload)
 		self.assertEqual(len(rows), 2)
 		self.assertIn("invoice", rows[0])
-		self.assertEqual(flt(payload["data"]["totals"]["outstanding"], 2), 5000)
+		self.assertEqual(flt(payload["data"]["totals"]["due"], 2), 5000)
 
 	def test_detail_obeys_the_same_gate(self):
 		rows = self._rows(
 			self._call(view_all=False, own=self.people[0], customer=self.customer, detail="1")
 		)
 		self.assertEqual({r["sales_person"] for r in rows}, {self.people[0]})
+
+	def test_the_total_is_the_due_not_the_raw_outstanding(self):
+		"""A receipt nobody put against an invoice leaves every invoice
+		where it was. Totalling the invoices would send an executive after
+		money the customer has already paid -- the A K Trade Links case."""
+		receivable = frappe.get_cached_value("Company", self.company, "default_receivable_account")
+		bank = frappe.db.get_value(
+			"Account",
+			{"company": self.company, "is_group": 0, "account_type": ["in", ["Bank", "Cash"]]},
+			"name",
+			order_by="name asc",
+		)
+		if not (receivable and bank):
+			self.skipTest("this bench cannot build a Payment Entry")
+		receipt = frappe.get_doc(
+			{
+				"doctype": "Payment Entry",
+				"payment_type": "Receive",
+				"company": self.company,
+				"posting_date": today(),
+				"party_type": "Customer",
+				"party": self.customer,
+				"paid_from": receivable,
+				"paid_to": bank,
+				"paid_amount": 1500,
+				"received_amount": 1500,
+				"source_exchange_rate": 1,
+				"target_exchange_rate": 1,
+				"reference_no": frappe.generate_hash(length=6),
+				"reference_date": today(),
+				"custom_sales_person": self.people[0],
+			}
+		)
+		receipt.flags.ignore_mandatory = True
+		receipt.insert(ignore_permissions=True)
+		receipt.submit()
+
+		totals = self._call(customer=self.customer)["data"]["totals"]
+		self.assertEqual(flt(totals["outstanding"], 2), 5000)
+		self.assertEqual(flt(totals["advance"], 2), 1500)
+		self.assertEqual(flt(totals["due"], 2), 3500)

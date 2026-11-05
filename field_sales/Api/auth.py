@@ -7439,13 +7439,22 @@ def get_customer_dues():
             filters["sales_person"] = own
 
         columns, rows = report.execute(filters)
+        detail = bool(filters.get("detail"))
         totals = {
-            "outstanding": sum(flt(r.get("outstanding")) for r in rows),
+            # Due, not Outstanding: a receipt that was never put against an
+            # invoice leaves every invoice where it was, and sending an
+            # executive after money the customer has already paid is the
+            # one thing this list must not do
+            "due": sum(flt(r.get("outstanding" if detail else "due")) for r in rows),
+            "outstanding": sum(flt(r.get("outstanding")) for r in rows) if not detail else None,
+            "advance": sum(flt(r.get("advance")) for r in rows) if not detail else None,
             "customers": len({r.get("customer") for r in rows}),
-            "invoices": sum(frappe.utils.cint(r.get("invoices")) for r in rows) if not filters.get("detail") else len(rows),
+            "invoices": len(rows) if detail else sum(
+                frappe.utils.cint(r.get("invoices")) for r in rows
+            ),
         }
         return response("ok", {
-            "detail": bool(filters.get("detail")),
+            "detail": detail,
             "columns": [{"label": c.get("label"), "fieldname": c.get("fieldname"),
                          "fieldtype": c.get("fieldtype")} for c in columns],
             "rows": rows,
