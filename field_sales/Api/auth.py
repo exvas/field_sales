@@ -7403,6 +7403,58 @@ def get_sales_collection_summary():
         return response(str(e), None, False, 500)
 
 
+@frappe.whitelist()
+def get_customer_dues():
+    """What customers still owe, for the mobile app.
+
+    Query params: optional sales_person, territory, customer, company, and
+    detail=1 for one row per open invoice instead of one per customer.
+
+    Runs the Customer Dues report the desk uses, so the two can never
+    disagree. Note this is NOT the Balance on the Sales and Collection
+    screen: that is one period's sales minus that period's receipts, while
+    this is what is outstanding right now, however old.
+    """
+    args = frappe.request.args
+    try:
+        from chundakadan.chundakadan.report.customer_dues import customer_dues as report
+
+        filters = {
+            "company": args.get("company") or frappe.db.get_single_value(
+                "Chundakadan Settings", "default_company"
+            ) or frappe.defaults.get_user_default("Company"),
+        }
+        for key in ("sales_person", "territory", "customer"):
+            if args.get(key):
+                filters[key] = args.get(key)
+        if args.get("detail") in ("1", "true", "True"):
+            filters["detail"] = 1
+
+        # a salesman only ever sees their own customers' dues; a view-all
+        # manager sees everybody and may still narrow to one executive
+        if not _caller_has_view_all_role():
+            own = _resolve_caller_sales_person()
+            if not own:
+                return response("No Sales Person linked", None, False, 404)
+            filters["sales_person"] = own
+
+        columns, rows = report.execute(filters)
+        totals = {
+            "outstanding": sum(flt(r.get("outstanding")) for r in rows),
+            "customers": len({r.get("customer") for r in rows}),
+            "invoices": sum(frappe.utils.cint(r.get("invoices")) for r in rows) if not filters.get("detail") else len(rows),
+        }
+        return response("ok", {
+            "detail": bool(filters.get("detail")),
+            "columns": [{"label": c.get("label"), "fieldname": c.get("fieldname"),
+                         "fieldtype": c.get("fieldtype")} for c in columns],
+            "rows": rows,
+            "totals": totals,
+        }, True, 200)
+    except Exception as e:
+        return response(str(e), None, False, 500)
+
+
 # ---------------------------------------------------------------------------
 # Grievances. The rules live in chundakadan.chundakadan.api.grievance; these
 # wrappers only shape the payload for the app.
